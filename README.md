@@ -29,18 +29,31 @@ Yang melindungi data Anda hanyalah **PIN tiap pengguna**. Karena itu:
 
 ## Modul yang sudah tersambung ke Google Sheet
 
-Data pada modul berikut benar-benar datang dari server:
+Seluruh modul kelima peran — 37 dari 38 — datanya benar-benar datang dari server:
 
-- **Approve Akun**, **Approve Event**, **Approve Usulan Biaya** (Kepala Sekolah)
-- **Data Master** (KTU) — `getDataMaster`
-- **Dashboard Bendahara** — `getTransaksi` + `getTagihan` + `getSiswa` + `getBiaya`
-- **Input Nilai** (Guru) — `getBekalInputNilai`, disimpan lewat `inputNilaiBanyak`
-- **Data Anak** (Wali Murid) — `getBekalDataAnak`
-- **Tagihan** (Wali Murid) — `getTagihanWaliMurid` + `getDataAnak`
+| Peran | Modul |
+|---|---|
+| Kepala Sekolah | Monitoring, Approve Akun, Approve Pengumuman, Approve Keuangan, Approve Event, Approve Usulan Biaya, Kelola Biaya, Data Siswa Pending, Laporan Kinerja, Konfigurasi, Akses Data Pengguna |
+| KTU | Dashboard, Pengumuman Global, Approval Tagihan, Pendaftaran Akun, Data Master, Input Data Siswa, Jadwal Pelajaran, Event, Arsip, Approve Data Wali Murid |
+| Bendahara | Dashboard, Pengumuman Tagihan, Usulan Biaya, Pencatatan Pembayaran, Manajemen Kas, Laporan Keuangan |
+| Guru | Dashboard, Absensi Mengajar, RPP, Input Nilai, Pengumuman Khusus |
+| Wali Murid | Data Anak, Pesan Wali Kelas, Tagihan, Pengumuman, Profil |
 
 Modul yang **belum** tersambung menandai dirinya sendiri di layar dengan pita
 *"Data contoh, belum tersambung server"*, supaya angka demo tidak pernah disangka
 angka sungguhan.
+
+### Yang masih menunggu perubahan backend
+
+Tiga hal berikut sengaja dibiarkan apa adanya karena `Code.gs` belum
+mendukungnya. Semuanya jujur menyatakan keadaannya di layar, bukan menampilkan
+data contoh diam-diam.
+
+| Bagian | Yang kurang di backend |
+|---|---|
+| **Pengumuman Personal** (Kepala Sekolah) | `createPengumuman` hanya menerima tipe `global`/`khusus`/`tagihan`, belum ada `personal` maupun kolom penerima bertipe pengguna. Modul ini masih berpita "data contoh". |
+| **Pengumuman Khusus** (Guru wali kelas) | Balasan `login` belum menyertakan `id_kelas_wali`, sehingga penerima pesan tak bisa ditentukan. Guru mapel tetap terkunci seperti semestinya. |
+| **Profil → Data Diri** | Belum ada aksi untuk membaca profil sendiri, jadi email/HP/alamat saat ini ditampilkan `-`. Pengajuan perubahan lewat `ajukanPerubahanWali` tetap berjalan; kolom yang dikosongkan dibiarkan seperti sekarang oleh server. |
 
 ## Cara kerja lapisan API
 
@@ -67,6 +80,11 @@ await _kirimAksi('id-tombol', 'simpanAnu', { data: muatan }, 'anu', 'Menyimpan')
 
 Bila server tidak menjawab, `_muatModul()` menampilkan kartu gagal beserta tombol
 **Coba Lagi** — bukan data lama dari peramban.
+
+Data server dititipkan pada `SRV` lewat `_srvIsi()`, lalu dibaca fungsi penggambar
+dengan `_srv('kunciServer', 'kunciLokal')`: server bila ada, `localStorage` bila
+aplikasi dijalankan tanpa backend. `loadModule()` mengosongkan `SRV` setiap
+berpindah modul supaya titipan modul lama tidak terbawa.
 
 ## Menjalankan secara lokal
 

@@ -2613,18 +2613,36 @@
     // supaya angka demo tidak pernah disangka angka sungguhan.
     const MODE_API = true;
 
+    // Wadah pemuat modul dan titipan data server.
+    // Sengaja diumumkan paling awal supaya modul mana pun boleh mendaftarkan
+    // pemuatnya tanpa harus berada di bawah blok infrastruktur.
+    const PEMUAT = {};
+    const SRV = {};
+
     // Modul yang datanya sudah benar-benar datang dari Google Sheet.
     // Dipakai _bannerLokal() untuk menandai modul yang belum tersambung.
     const MODUL_API = [
       'Approve Akun', 'Approve Event', 'Approve Usulan Biaya',
-      'Data Master', 'Data Anak', 'Input Nilai', 'Tagihan'
+      'Data Master', 'Data Anak', 'Input Nilai', 'Tagihan',
+      'Monitoring', 'Approve Pengumuman', 'Approve Keuangan',
+      'Kelola Biaya', 'Laporan Kinerja',
+      'Pendaftaran Akun', 'Approval Tagihan', 'Pengumuman Global',
+      'Input Data Siswa', 'Data Siswa Pending', 'Jadwal Pelajaran',
+      'Event', 'Arsip', 'Approve Data Wali Murid',
+      'Pengumuman Tagihan', 'Usulan Biaya', 'Pencatatan Pembayaran',
+      'Manajemen Kas', 'Laporan Keuangan',
+      'Absensi Mengajar', 'RPP', 'Pengumuman Khusus',
+      'Pesan Wali Kelas', 'Pengumuman', 'Profil',
+      'Konfigurasi', 'Akses Data Pengguna'
     ];
 
     // Sebagian nama menu dipakai lebih dari satu peran. "Dashboard" milik
     // Bendahara sudah tersambung, sedangkan milik peran lain belum, jadi
     // penandanya tidak boleh ditentukan dari nama menu saja.
     const MODUL_API_PERAN = {
-      bendahara: ['Dashboard']
+      bendahara: ['Dashboard'],
+      ktu: ['Dashboard'],
+      guru: ['Dashboard']
     };
 
     // Pita penanda untuk modul yang masih membaca data contoh dari peramban.
@@ -2722,10 +2740,10 @@
 
     // Daftar menu sidebar untuk setiap role
     const MENU_ROLE = {
-      kepsek: ['Monitoring', 'Approve Akun', 'Approve Pengumuman', 'Approve Keuangan', 'Approve Event', 'Approve Usulan Biaya', 'Kelola Biaya', 'Data Siswa Pending', 'Pengumuman Personal', 'Laporan Kinerja', 'Konfigurasi', 'Akses Data Pengguna'],
-      bendahara: ['Dashboard', 'Pengumuman Tagihan', 'Usulan Biaya', 'Pencatatan Pembayaran', 'Manajemen Kas', 'Laporan Keuangan'],
-      ktu: ['Dashboard', 'Pengumuman Global', 'Approval Tagihan', 'Pendaftaran Akun', 'Data Master', 'Input Data Siswa', 'Jadwal Pelajaran', 'Event', 'Arsip', 'Approve Data Wali Murid'],
-      guru: ['Dashboard', 'Absensi Mengajar', 'RPP', 'Input Nilai', 'Pengumuman Khusus'],
+      kepsek: ['Monitoring', 'Approve Akun', 'Approve Pengumuman', 'Approve Keuangan', 'Approve Event', 'Approve Usulan Biaya', 'Kelola Biaya', 'Data Siswa Pending', 'Pengumuman Personal', 'Laporan Kinerja', 'Konfigurasi', 'Akses Data Pengguna', 'Profil'],
+      bendahara: ['Dashboard', 'Pengumuman Tagihan', 'Usulan Biaya', 'Pencatatan Pembayaran', 'Manajemen Kas', 'Laporan Keuangan', 'Profil'],
+      ktu: ['Dashboard', 'Pengumuman Global', 'Approval Tagihan', 'Pendaftaran Akun', 'Data Master', 'Input Data Siswa', 'Jadwal Pelajaran', 'Event', 'Arsip', 'Approve Data Wali Murid', 'Profil'],
+      guru: ['Dashboard', 'Absensi Mengajar', 'RPP', 'Input Nilai', 'Pengumuman Khusus', 'Profil'],
       walimurid: ['Data Anak', 'Pesan Wali Kelas', 'Tagihan', 'Pengumuman', 'Profil']
     };
 
@@ -3147,6 +3165,26 @@
 
     // Modul Monitoring milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekMonitoring() {
+      const judul = '<h1 class="module-title">Monitoring Pesantren</h1>';
+
+      // Angka ringkasan dijemput dari server supaya tidak menyesatkan
+      if (MODE_API) return judul + '<div id="isi-monitoring" data-muat="monitoring"></div>';
+
+      return judul + _htmlIsiMonitoring();
+    }
+
+    // Satu panggilan membawa ringkasan, antrean keuangan, dan catatan aktivitas
+    PEMUAT.monitoring = function() {
+      return _muatModul('isi-monitoring',
+        [['getDashboardKepsek'], ['getTransaksi'], ['getPengumuman'], ['getLog', { batas: 5 }]],
+        function(d) {
+          _srvIsi({ transaksi: d[1], pengumuman: d[2], log: d[3] });
+          SRV.ringkasan = d[0];
+          return _htmlIsiMonitoring();
+        }, 'monitoring', 5);
+    };
+
+    function _htmlIsiMonitoring() {
       // Pembaca localStorage yang aman: selalu mengembalikan array
       const baca = function(kunci) {
         try {
@@ -3158,17 +3196,21 @@
       };
 
       const hariIni = new Date().toDateString();
+      const R = SRV.ringkasan;
 
-      // Guru hadir dihitung dari catatan absensi bertanggal hari ini
-      const guruHadir = baca('sip_absensi').filter(function(a) {
+      // Angka dari server bila ada, selain itu dihitung dari penyimpanan peramban
+      const guruHadir = R ? R.guru_hadir_hari_ini : baca('sip_absensi').filter(function(a) {
         if (!a || !a.tgl) return false;
         const t = new Date(a.tgl);
         return !isNaN(t.getTime()) && t.toDateString() === hariIni;
       }).length;
 
-      const akunPending = baca('sip_users').filter(function(u) { return u && u.aktif === false; }).length;
-      const pengumumanPending = baca('sip_pengumuman').filter(function(p) { return p && p.status === 'pending'; }).length;
-      const siswaPending = baca('sip_siswa').filter(function(s) { return s && s.status_data === 'pending'; }).length;
+      const akunPending = R ? R.akun_pending
+        : baca('sip_users').filter(function(u) { return u && u.aktif === false; }).length;
+      const pengumumanPending = R ? R.pengumuman_pending
+        : baca('sip_pengumuman').filter(function(p) { return p && p.status === 'pending'; }).length;
+      const siswaPending = R ? R.siswa_pending
+        : baca('sip_siswa').filter(function(s) { return s && s.status_data === 'pending'; }).length;
 
       // Kiriman keuangan yang sudah lolos KTU dan kini menunggu Kepala Sekolah
       const rincianKeu = _rincianKeuanganKepsek();
@@ -3197,8 +3239,9 @@
                '</div>';
       }).join('');
 
-      // Lima catatan aktivitas paling akhir
-      const log = baca('sip_log').slice(-5).reverse();
+      // Lima catatan aktivitas paling akhir.
+      // getLog sudah mengembalikannya terurut terbaru lebih dulu.
+      const log = SRV.log ? SRV.log : baca('sip_log').slice(-5).reverse();
       const htmlLog = log.length
         ? '<ul class="log-list">' + log.map(function(l) {
             const waktu = l && l.timestamp ? new Date(l.timestamp) : null;
@@ -3214,8 +3257,7 @@
           }).join('') + '</ul>'
         : '<p class="log-kosong">Belum ada aktivitas yang tercatat.</p>';
 
-      return '<h1 class="module-title">Monitoring Pesantren</h1>' +
-             '<div class="stat-grid">' + htmlKartu + '</div>' +
+      return '<div class="stat-grid">' + htmlKartu + '</div>' +
              '<h2 class="section-title">Aktivitas Terbaru</h2>' +
              '<div class="card">' + htmlLog + '</div>';
     }
@@ -3293,8 +3335,8 @@
      *       jadi loadModule() tidak perlu disentuh lagi tiap tambah modul.
      * ==================================================================== */
 
-    // Daftar pemuat data. Kuncinya dipakai pada atribut data-muat.
-    const PEMUAT = {};
+    // Daftar pemuat data (PEMUAT) diumumkan di dekat MODE_API,
+    // kuncinya dipakai pada atribut data-muat.
 
     /**
      * Jemput satu atau beberapa aksi sekaligus lalu gambar hasilnya.
@@ -3433,7 +3475,6 @@
      *  berhenti di kartu gagal, jadi layar tidak akan pernah menampilkan
      *  data peramban sambil mengaku data server.
      * -------------------------------------------------------------------- */
-    const SRV = {};
 
     // Titipkan hasil satu jemputan. Kunci memakai nama tabelnya.
     function _srvIsi(isi) {
@@ -3688,13 +3729,30 @@
 
     // Modul Approve Pengumuman milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekApprovePengumuman() {
-      let semua = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_pengumuman'));
-        semua = Array.isArray(isi) ? isi : [];
-      } catch (e) {
-        semua = [];
-      }
+      const kepala = '<h1 class="module-title">Approve Pengumuman</h1>';
+      if (MODE_API) return kepala + '<div id="isi-approve-peng" data-muat="approvePengumuman"></div>';
+      return _htmlIsiApprovePengumuman();
+    }
+
+    PEMUAT.approvePengumuman = function() {
+      return _muatModul('isi-approve-peng', [['getPengumuman', { filter: { status: 'pending' } }]],
+        function(d) {
+          _srvIsi({ pengumuman: d[0] });
+          // Judulnya sudah dicetak di luar wadah, jadi di sini tanpa judul
+          return _htmlIsiApprovePengumuman(true);
+        }, 'approvePengumuman', 3);
+    };
+
+    // Pindah tab tanpa menjemput ulang
+    function gantiTabPengumuman(nilai) {
+      tabPengumumanAktif = nilai;
+      const wadah = document.getElementById('isi-approve-peng');
+      if (!wadah || !SRV.pengumuman) { loadModule('Approve Pengumuman'); return; }
+      wadah.innerHTML = _htmlIsiApprovePengumuman(true);
+    }
+
+    function _htmlIsiApprovePengumuman(tanpaJudul) {
+      const semua = _srv('pengumuman', 'sip_pengumuman');
 
       // Hanya yang menunggu persetujuan dan sesuai tab yang sedang dipilih
       const daftar = semua.filter(function(p) {
@@ -3718,11 +3776,11 @@
       ].map(function(t) {
         const aktif = (t.nilai === tabPengumumanAktif) ? ' active' : '';
         return '<button class="tab-btn' + aktif + '" ' +
-               'onclick="tabPengumumanAktif=\'' + t.nilai + '\';loadModule(\'Approve Pengumuman\')">' +
+               'onclick="gantiTabPengumuman(\'' + t.nilai + '\')">' +
                t.teks + '</button>';
       }).join('');
 
-      const judul = '<h1 class="module-title">Approve Pengumuman</h1>' +
+      const judul = (tanpaJudul ? '' : '<h1 class="module-title">Approve Pengumuman</h1>') +
                     '<div class="tab-bar">' + tab + '</div>';
 
       if (daftar.length === 0) {
@@ -3755,9 +3813,9 @@
                  '</div>' +
                  '<p class="peng-konten">' + (p.konten || '-') + '</p>' +
                  '<div class="peng-aksi">' +
-                   '<button class="btn-aksi btn-setujui" onclick="approvePengumuman(' + p.id + ')">' +
+                   '<button class="btn-aksi btn-setujui" id="peng-setuju-' + p.id + '" onclick="approvePengumuman(' + p.id + ')">' +
                      '<i class="fa-solid fa-check"></i>Setujui</button>' +
-                   '<button class="btn-aksi btn-tolak" onclick="tolakPengumuman(' + p.id + ')">' +
+                   '<button class="btn-aksi btn-tolak" id="peng-tolak-' + p.id + '" onclick="tolakPengumuman(' + p.id + ')">' +
                      '<i class="fa-solid fa-times"></i>Tolak</button>' +
                  '</div>' +
                '</div>';
@@ -3767,7 +3825,13 @@
     }
 
     // Setujui satu pengumuman
-    function approvePengumuman(id) {
+    async function approvePengumuman(id) {
+      if (MODE_API) {
+        await _kirimAksi('peng-setuju-' + id, 'approvePengumuman',
+          { pengumumanId: id, status: 'approved' }, 'approvePengumuman', 'Menyetujui');
+        return;
+      }
+
       const sesi = getSession();
       let daftar = [];
       try {
@@ -3804,7 +3868,14 @@
     }
 
     // Tolak satu pengumuman
-    function tolakPengumuman(id) {
+    async function tolakPengumuman(id) {
+      if (MODE_API) {
+        if (!confirm('Tolak pengumuman ini?')) return;
+        await _kirimAksi('peng-tolak-' + id, 'approvePengumuman',
+          { pengumumanId: id, status: 'rejected' }, 'approvePengumuman', 'Menolak');
+        return;
+      }
+
       const sesi = getSession();
       let daftar = [];
       try {
@@ -3850,13 +3921,26 @@
 
     // Modul Kelola Biaya milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekKelolaBiaya() {
-      let daftar = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_biaya'));
-        daftar = Array.isArray(isi) ? isi.filter(function(b) { return b && b.id !== undefined; }) : [];
-      } catch (e) {
-        daftar = [];
-      }
+      if (MODE_API) return '<div id="isi-kelola-biaya" data-muat="kelolaBiaya"></div>';
+      return _htmlIsiKelolaBiaya();
+    }
+
+    PEMUAT.kelolaBiaya = function() {
+      return _muatModul('isi-kelola-biaya', [['getBiaya']], function(d) {
+        _srvIsi({ biaya: d[0] });
+        return _htmlIsiKelolaBiaya();
+      }, 'kelolaBiaya', 4);
+    };
+
+    // Gambar ulang tanpa menjemput ulang, dipakai tombol Edit dan Batal
+    function _gambarUlangBiaya() {
+      const wadah = document.getElementById('isi-kelola-biaya');
+      if (!wadah || !SRV.biaya) { loadModule('Kelola Biaya'); return; }
+      wadah.innerHTML = _htmlIsiKelolaBiaya();
+    }
+
+    function _htmlIsiKelolaBiaya() {
+      const daftar = _srv('biaya', 'sip_biaya').filter(function(b) { return b && b.id !== undefined; }).slice();
 
       // Terbaru di atas. Tanggal dipakai hanya bila semua entri punya tgl_dibuat
       // yang sah, selain itu urutan memakai id agar hasilnya konsisten.
@@ -3880,7 +3964,7 @@
             '<input type="text" id="biaya-nama" class="input" placeholder="contoh: SPP Bulanan">' +
             '<input type="number" id="biaya-nominal" class="input" placeholder="contoh: 500000" min="1">' +
           '</div>' +
-          '<button class="btn btn--full" onclick="tambahBiaya()">Tambah Biaya</button>' +
+          '<button class="btn btn--full" id="biaya-tambah" onclick="tambahBiaya()">Tambah Biaya</button>' +
         '</div>';
 
       // --- Bagian bawah: daftar biaya ---
@@ -3907,9 +3991,9 @@
                      '<td><input type="number" class="input-inline" id="edit-nominal-' + b.id + '" value="' + (Number(b.nominal_default) || 0) + '" min="1"></td>' +
                      selStatus +
                      '<td><div class="aksi-grup">' +
-                       '<button class="btn-aksi btn-setujui" onclick="simpanEditBiaya(' + b.id + ')">' +
+                       '<button class="btn-aksi btn-setujui" id="biaya-simpan-' + b.id + '" onclick="simpanEditBiaya(' + b.id + ')">' +
                          '<i class="fa-solid fa-check"></i>Simpan</button>' +
-                       '<button class="btn-aksi btn-abu" onclick="biayaSedangDiedit=null;loadModule(\'Kelola Biaya\')">' +
+                       '<button class="btn-aksi btn-abu" onclick="biayaSedangDiedit=null;_gambarUlangBiaya()">' +
                          '<i class="fa-solid fa-xmark"></i>Batal</button>' +
                      '</div></td>' +
                    '</tr>';
@@ -3921,12 +4005,12 @@
                    '<td>' + formatRupiah(b.nominal_default) + '</td>' +
                    selStatus +
                    '<td><div class="aksi-grup">' +
-                     '<button class="btn-aksi btn-edit" onclick="biayaSedangDiedit=' + b.id + ';loadModule(\'Kelola Biaya\')">' +
+                     '<button class="btn-aksi btn-edit" onclick="biayaSedangDiedit=' + b.id + ';_gambarUlangBiaya()">' +
                        '<i class="fa-solid fa-pen"></i>Edit</button>' +
                      (aktif
-                       ? '<button class="btn-aksi btn-abu" onclick="toggleStatusBiaya(' + b.id + ')">' +
+                       ? '<button class="btn-aksi btn-abu" id="biaya-status-' + b.id + '" onclick="toggleStatusBiaya(' + b.id + ')">' +
                            '<i class="fa-solid fa-ban"></i>Nonaktifkan</button>'
-                       : '<button class="btn-aksi btn-setujui" onclick="toggleStatusBiaya(' + b.id + ')">' +
+                       : '<button class="btn-aksi btn-setujui" id="biaya-status-' + b.id + '" onclick="toggleStatusBiaya(' + b.id + ')">' +
                            '<i class="fa-solid fa-rotate-left"></i>Aktifkan</button>') +
                    '</div></td>' +
                  '</tr>';
@@ -3950,7 +4034,7 @@
     }
 
     // Tambah satu jenis biaya baru dari form
-    function tambahBiaya() {
+    async function tambahBiaya() {
       const sesi = getSession();
       const nama = document.getElementById('biaya-nama').value.trim();
       const nominal = Number(document.getElementById('biaya-nominal').value);
@@ -3961,6 +4045,13 @@
       }
       if (!nominal || nominal <= 0) {
         showNotif('Nominal harus lebih dari 0', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('biaya-tambah', 'crudBiaya',
+          { aksiBiaya: 'create', data: { nama_biaya: nama, nominal_default: nominal } },
+          'kelolaBiaya', 'Menambah');
         return;
       }
 
@@ -4007,7 +4098,7 @@
     }
 
     // Simpan hasil penyuntingan satu baris biaya
-    function simpanEditBiaya(id) {
+    async function simpanEditBiaya(id) {
       const sesi = getSession();
       const kolomNama = document.getElementById('edit-nama-' + id);
       const kolomNominal = document.getElementById('edit-nominal-' + id);
@@ -4025,6 +4116,15 @@
       }
       if (!nominal || nominal <= 0) {
         showNotif('Nominal harus lebih dari 0', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        // crudBiaya hanya menerima perubahan nominal, namanya tidak ikut diubah
+        biayaSedangDiedit = null;
+        await _kirimAksi('biaya-simpan-' + id, 'crudBiaya',
+          { aksiBiaya: 'update', data: { id: id, nominal_default: nominal } },
+          'kelolaBiaya', 'Menyimpan');
         return;
       }
 
@@ -4063,15 +4163,9 @@
     }
 
     // Nonaktifkan atau aktifkan kembali satu biaya. Data tidak pernah dihapus.
-    function toggleStatusBiaya(id) {
+    async function toggleStatusBiaya(id) {
       const sesi = getSession();
-      let daftar = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_biaya'));
-        daftar = Array.isArray(isi) ? isi : [];
-      } catch (e) {
-        daftar = [];
-      }
+      let daftar = _srv('biaya', 'sip_biaya');
 
       const i = daftar.findIndex(function(b) { return b && String(b.id) === String(id); });
       if (i === -1) {
@@ -4083,6 +4177,18 @@
 
       // Konfirmasi hanya saat menonaktifkan
       if (sedangAktif && !confirm('Nonaktifkan biaya ini?')) return;
+
+      if (MODE_API) {
+        // Backend hanya menyediakan penonaktifan; mengaktifkan kembali
+        // belum ada aksinya, jadi dikatakan apa adanya.
+        if (!sedangAktif) {
+          showNotif('Mengaktifkan kembali biaya belum tersedia di server', 'error');
+          return;
+        }
+        await _kirimAksi('biaya-status-' + id, 'crudBiaya',
+          { aksiBiaya: 'delete', data: { id: id } }, 'kelolaBiaya', 'Menonaktifkan');
+        return;
+      }
 
       daftar[i].status_aktif = !sedangAktif;
       localStorage.setItem('sip_biaya', JSON.stringify(daftar));
@@ -4110,6 +4216,19 @@
 
     // Modul Data Siswa Pending milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekDataSiswa() {
+      if (MODE_API) return '<div id="isi-siswa-pending" data-muat="siswaPending"></div>';
+      return _htmlIsiDataSiswaKepsek();
+    }
+
+    PEMUAT.siswaPending = function() {
+      return _muatModul('isi-siswa-pending', [['getSiswa'], ['getKelas'], ['getUsers']],
+        function(d) {
+          _srvIsi({ siswa: d[0], kelas: d[1], users: d[2] });
+          return _htmlIsiDataSiswaKepsek();
+        }, 'siswaPending', 4);
+    };
+
+    function _htmlIsiDataSiswaKepsek() {
       // Pembaca localStorage yang aman: selalu mengembalikan array
       const baca = function(kunci) {
         try {
@@ -4120,9 +4239,9 @@
         }
       };
 
-      const semua = baca('sip_siswa');
-      const kelas = baca('sip_kelas');
-      const users = baca('sip_users');
+      const semua = _srv('siswa', 'sip_siswa');
+      const kelas = _srv('kelas', 'sip_kelas');
+      const users = _srv('users', 'sip_users');
 
       // Seluruh siswa ditampilkan, bukan hanya yang menunggu verifikasi
       const daftar = semua.filter(function(s) { return s && s.id !== undefined; });
@@ -4187,9 +4306,9 @@
 
         // Tombol Setujui dan Tolak hanya untuk data yang belum diverifikasi
         const tombolVerifikasi = pending
-          ? '<button class="btn-aksi btn-setujui" onclick="approveSiswa(' + s.id + ')">' +
+          ? '<button class="btn-aksi btn-setujui" id="siswa-setuju-' + s.id + '" onclick="approveSiswa(' + s.id + ')">' +
               '<i class="fa-solid fa-check"></i>Setujui</button>' +
-            '<button class="btn-aksi btn-tolak" onclick="tolakSiswa(' + s.id + ')">' +
+            '<button class="btn-aksi btn-tolak" id="siswa-tolak-' + s.id + '" onclick="tolakSiswa(' + s.id + ')">' +
               '<i class="fa-solid fa-times"></i>Tolak</button>'
           : '';
 
@@ -4382,7 +4501,13 @@
     }
 
     // Setujui data satu siswa
-    function approveSiswa(id) {
+    async function approveSiswa(id) {
+      if (MODE_API) {
+        await _kirimAksi('siswa-setuju-' + id, 'approveSiswa',
+          { siswaId: id, status: 'approved' }, 'siswaPending', 'Menyetujui');
+        return;
+      }
+
       const sesi = getSession();
       let daftar = [];
       try {
@@ -4420,8 +4545,15 @@
     }
 
     // Tolak data siswa. Datanya dihapus, jadi wajib dikonfirmasi lebih dulu.
-    function tolakSiswa(id) {
+    async function tolakSiswa(id) {
       if (!confirm('Tolak data siswa ini? Data akan dihapus.')) return;
+
+      if (MODE_API) {
+        await _kirimAksi('siswa-tolak-' + id, 'approveSiswa',
+          { siswaId: id, status: 'rejected' }, 'siswaPending', 'Menolak');
+        return;
+      }
+
 
       const sesi = getSession();
       let daftar = [];
@@ -4699,6 +4831,44 @@
 
     // Modul Laporan Kinerja milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekLaporanKinerja() {
+      const kepala = '<h1 class="module-title">Laporan Kinerja Pengajar</h1>' +
+                     '<p class="module-sub">Rekap absensi, RPP, dan nilai per guru</p>';
+      if (MODE_API) return kepala + '<div id="isi-laporan-kinerja" data-muat="laporanKinerja"></div>';
+      return _htmlIsiLaporanKinerja();
+    }
+
+    // Rentang tanggal dikirim ke server, penyaringan per guru dikerjakan di
+    // layar supaya daftar pilihan gurunya tidak menyusut jadi satu nama.
+    PEMUAT.laporanKinerja = function() {
+      _isiTanggalLaporanBilaKosong();
+      const rentang = { tgl_mulai: laporanFilter.tglMulai, tgl_akhir: laporanFilter.tglAkhir };
+
+      // Data rincian ikut dijemput sekarang, serentak dalam satu putaran,
+      // supaya popup detail per guru tidak perlu menunggu server lagi.
+      return _muatModul('isi-laporan-kinerja',
+        [['getLaporanKinerja', { filter: rentang }], ['getAbsensiGuru', { filter: rentang }],
+         ['getRPP', { filter: rentang }], ['getNilai', { filter: rentang }],
+         ['getMapel'], ['getKelas'], ['getSiswa']],
+        function(d) {
+          SRV.laporan = d[0];
+          _srvIsi({ absensiGuru: d[1], rpp: d[2], nilai: d[3], mapel: d[4], kelas: d[5], siswa: d[6] });
+          return _htmlIsiLaporanKinerja(true);
+        }, 'laporanKinerja', 4);
+    };
+
+    // Nilai awal penyaring: sebulan terakhir sampai hari ini
+    function _isiTanggalLaporanBilaKosong() {
+      if (laporanFilter.tglMulai && laporanFilter.tglAkhir) return;
+      const dua = function(n) { return String(n).padStart(2, '0'); };
+      const ymd = function(d) { return d.getFullYear() + '-' + dua(d.getMonth() + 1) + '-' + dua(d.getDate()); };
+      const kini = new Date();
+      const sebulanLalu = new Date();
+      sebulanLalu.setMonth(sebulanLalu.getMonth() - 1);
+      laporanFilter.tglMulai = ymd(sebulanLalu);
+      laporanFilter.tglAkhir = ymd(kini);
+    }
+
+    function _htmlIsiLaporanKinerja(tanpaJudul) {
       const baca = function(kunci) {
         try {
           const isi = JSON.parse(localStorage.getItem(kunci));
@@ -4722,9 +4892,16 @@
       }
 
       // --- Daftar guru untuk dropdown, urut abjad ---
-      const semuaGuru = baca('sip_users').filter(function(u) {
-        return u && String(u.role || '').toLowerCase() === 'guru';
-      });
+      // Daftar guru dari server sudah lengkap beserta jenis penugasannya
+      const semuaGuru = SRV.laporan
+        ? SRV.laporan.guru.map(function(g) {
+            return { id: g.id, nama: g.nama, subrole: g.jenis_guru,
+                     absensi_hadir: g.absensi_hadir, jumlah_rpp: g.jumlah_rpp,
+                     jumlah_nilai: g.jumlah_nilai, rata_nilai: g.rata_nilai };
+          })
+        : baca('sip_users').filter(function(u) {
+            return u && String(u.role || '').toLowerCase() === 'guru';
+          });
       semuaGuru.sort(function(a, b) {
         return String(a.nama || '').localeCompare(String(b.nama || ''));
       });
@@ -4755,13 +4932,13 @@
             '</div>' +
           '</div>' +
           '<div class="filter-aksi">' +
-            '<button class="btn" onclick="tampilkanLaporan()"><i class="fa-solid fa-search"></i> Tampilkan</button>' +
+            '<button class="btn" id="laporan-tampilkan" onclick="tampilkanLaporan()"><i class="fa-solid fa-search"></i> Tampilkan</button>' +
             '<button class="btn btn--abu" onclick="resetLaporan()"><i class="fa-solid fa-sync"></i> Reset</button>' +
           '</div>' +
         '</div>';
 
-      const judul = '<h1 class="module-title">Laporan Kinerja Pengajar</h1>' +
-                    '<p class="module-sub">Rekap absensi, RPP, dan nilai per guru</p>';
+      const judul = tanpaJudul ? '' : ('<h1 class="module-title">Laporan Kinerja Pengajar</h1>' +
+                    '<p class="module-sub">Rekap absensi, RPP, dan nilai per guru</p>');
 
       // Selama tombol Tampilkan belum ditekan, tidak ada data yang digambar
       if (!laporanSudahTampil) {
@@ -4769,43 +4946,57 @@
           '<div class="card"><p class="pesan-info">Gunakan filter di atas untuk melihat laporan</p></div>';
       }
 
-      // --- Kumpulkan data dalam rentang tanggal ---
-      const absensi = filterByTanggal(baca('sip_absensi'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
-      const rpp = filterByTanggal(baca('sip_rpp'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
-      const nilai = filterByTanggal(baca('sip_nilai'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
-
       // Guru yang masuk laporan mengikuti pilihan dropdown
       const guruTampil = laporanFilter.idGuru
         ? semuaGuru.filter(function(g) { return String(g.id) === String(laporanFilter.idGuru); })
         : semuaGuru;
 
-      const idTampil = guruTampil.map(function(g) { return String(g.id); });
-      const milikGuru = function(arr) {
-        return arr.filter(function(d) { return idTampil.indexOf(String(d.id_guru)) > -1; });
-      };
+      // --- Kumpulkan angka ---
+      // Server sudah mengirimnya terhitung per guru; jalur localStorage
+      // masih menghitungnya sendiri dari baris mentah.
+      let absensi = [], rpp = [], nilai = [];
+      let totalHadir, totalRpp, rataSemua, adaAngka;
 
-      const absensiHadir = milikGuru(absensi).filter(function(a) {
-        return String(a.status || '').toLowerCase() === 'hadir';
-      });
-      const rppTampil = milikGuru(rpp);
-      const nilaiTampil = milikGuru(nilai);
-      const rataSemua = hitungRataRata(nilaiTampil.map(function(n) { return n.nilai; }));
+      if (SRV.laporan) {
+        totalHadir = guruTampil.reduce(function(a, g) { return a + (g.absensi_hadir || 0); }, 0);
+        totalRpp = guruTampil.reduce(function(a, g) { return a + (g.jumlah_rpp || 0); }, 0);
+        const jumlahNilai = guruTampil.reduce(function(a, g) { return a + (g.jumlah_nilai || 0); }, 0);
+        const bobot = guruTampil.reduce(function(a, g) { return a + (g.rata_nilai || 0) * (g.jumlah_nilai || 0); }, 0);
+        rataSemua = jumlahNilai ? bobot / jumlahNilai : 0;
+        adaAngka = jumlahNilai > 0;
+      } else {
+        absensi = filterByTanggal(baca('sip_absensi'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
+        rpp = filterByTanggal(baca('sip_rpp'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
+        nilai = filterByTanggal(baca('sip_nilai'), laporanFilter.tglMulai, laporanFilter.tglAkhir);
+
+        const idTampil = guruTampil.map(function(g) { return String(g.id); });
+        const milikGuru = function(arr) {
+          return arr.filter(function(d) { return idTampil.indexOf(String(d.id_guru)) > -1; });
+        };
+        totalHadir = milikGuru(absensi).filter(function(a) {
+          return String(a.status || '').toLowerCase() === 'hadir';
+        }).length;
+        totalRpp = milikGuru(rpp).length;
+        const nilaiTampil = milikGuru(nilai);
+        rataSemua = hitungRataRata(nilaiTampil.map(function(n) { return n.nilai; }));
+        adaAngka = nilaiTampil.length > 0;
+      }
 
       const ringkasan =
         '<div class="stat-grid">' +
           '<div class="stat-card stat-card--hijau" style="animation-delay:0.1s">' +
             '<i class="fa-solid fa-calendar-check stat-icon"></i>' +
-            '<div class="stat-number">' + absensiHadir.length + '</div>' +
+            '<div class="stat-number">' + totalHadir + '</div>' +
             '<div class="stat-label">Total Absensi Hadir</div>' +
           '</div>' +
           '<div class="stat-card stat-card--biru" style="animation-delay:0.2s">' +
             '<i class="fa-solid fa-book stat-icon"></i>' +
-            '<div class="stat-number">' + rppTampil.length + '</div>' +
+            '<div class="stat-number">' + totalRpp + '</div>' +
             '<div class="stat-label">Total RPP Dibuat</div>' +
           '</div>' +
           '<div class="stat-card stat-card--emas" style="animation-delay:0.3s">' +
             '<i class="fa-solid fa-chart-line stat-icon"></i>' +
-            '<div class="stat-number">' + (nilaiTampil.length ? rataSemua.toFixed(1) : '-') + '</div>' +
+            '<div class="stat-number">' + (adaAngka ? rataSemua.toFixed(1) : '-') + '</div>' +
             '<div class="stat-label">Rata-rata Nilai</div>' +
           '</div>' +
         '</div>';
@@ -4813,7 +5004,7 @@
       // --- Tabel rincian per guru ---
       // Pesan kosong dipakai bila tidak ada guru yang cocok, atau bila sepanjang
       // periode itu memang tidak ada satu pun absensi, RPP, maupun nilai.
-      const tanpaData = (absensiHadir.length === 0 && rppTampil.length === 0 && nilaiTampil.length === 0);
+      const tanpaData = (totalHadir === 0 && totalRpp === 0 && !adaAngka);
 
       let tabel;
       if (guruTampil.length === 0 || tanpaData) {
@@ -4821,12 +5012,20 @@
       } else {
         const baris = guruTampil.map(function(g, urut) {
           const idg = String(g.id);
-          const hadir = absensi.filter(function(a) {
-            return String(a.id_guru) === idg && String(a.status || '').toLowerCase() === 'hadir';
-          }).length;
-          const jmlRpp = rpp.filter(function(r) { return String(r.id_guru) === idg; }).length;
-          const nilaiGuru = nilai.filter(function(n) { return String(n.id_guru) === idg; });
-          const rata = nilaiGuru.length ? hitungRataRata(nilaiGuru.map(function(n) { return n.nilai; })).toFixed(1) : '-';
+          let hadir, jmlRpp, rata;
+
+          if (SRV.laporan) {
+            hadir = g.absensi_hadir || 0;
+            jmlRpp = g.jumlah_rpp || 0;
+            rata = g.jumlah_nilai ? Number(g.rata_nilai).toFixed(1) : '-';
+          } else {
+            hadir = absensi.filter(function(a) {
+              return String(a.id_guru) === idg && String(a.status || '').toLowerCase() === 'hadir';
+            }).length;
+            jmlRpp = rpp.filter(function(r) { return String(r.id_guru) === idg; }).length;
+            const nilaiGuru = nilai.filter(function(n) { return String(n.id_guru) === idg; });
+            rata = nilaiGuru.length ? hitungRataRata(nilaiGuru.map(function(n) { return n.nilai; })).toFixed(1) : '-';
+          }
 
           const waliKelas = String(g.subrole || '').toLowerCase() === 'walikelas';
           const badge = '<span class="badge badge--' + (waliKelas ? 'walikelas' : 'mapel') + '">' +
@@ -4878,6 +5077,12 @@
 
       laporanFilter = { idGuru: g.value, tglMulai: m.value, tglAkhir: a.value };
       laporanSudahTampil = true;
+
+      // Rentang tanggalnya berubah, jadi angkanya harus dijemput ulang
+      if (document.getElementById('isi-laporan-kinerja')) {
+        PEMUAT.laporanKinerja();
+        return;
+      }
       loadModule('Laporan Kinerja');
     }
 
@@ -4885,7 +5090,12 @@
     function resetLaporan() {
       laporanFilter = { idGuru: '', tglMulai: '', tglAkhir: '' };
       laporanSudahTampil = false;
-      loadModule('Laporan Kinerja');
+      if (document.getElementById('isi-laporan-kinerja')) {
+        _isiTanggalLaporanBilaKosong();
+        PEMUAT.laporanKinerja();
+      } else {
+        loadModule('Laporan Kinerja');
+      }
       showNotif('Filter dikembalikan ke awal', 'success');
     }
 
@@ -4900,7 +5110,10 @@
         }
       };
 
-      const guru = baca('sip_users').find(function(u) { return u && String(u.id) === String(idGuru); });
+      // Nama guru diambil dari hasil laporan bila datanya dari server
+      const guru = SRV.laporan
+        ? SRV.laporan.guru.find(function(u) { return String(u.id) === String(idGuru); })
+        : baca('sip_users').find(function(u) { return u && String(u.id) === String(idGuru); });
       if (!guru) {
         showNotif('Data guru tidak ditemukan', 'error');
         return;
@@ -4911,9 +5124,9 @@
       if (String(guruDetailAktif) !== String(idGuru)) tabDetailGuru = 'absensi';
 
       const idg = String(idGuru);
-      const mapel = baca('sip_mapel');
-      const kelas = baca('sip_kelas');
-      const siswa = baca('sip_siswa');
+      const mapel = _srv('mapel', 'sip_mapel');
+      const kelas = _srv('kelas', 'sip_kelas');
+      const siswa = _srv('siswa', 'sip_siswa');
 
       // Nama acuan; bila datanya belum ada, id ditampilkan apa adanya
       const namaAcuan = function(daftar, id, kolom) {
@@ -4923,8 +5136,10 @@
       };
 
       // Ambil sepuluh data terbaru dalam rentang tanggal yang sedang dipakai
+      // Peta kunci localStorage ke titipan server yang sepadan
+      const sumber = { sip_absensi: 'absensiGuru', sip_rpp: 'rpp', sip_nilai: 'nilai' };
       const ambil = function(kunci) {
-        const d = filterByTanggal(baca(kunci), laporanFilter.tglMulai, laporanFilter.tglAkhir)
+        const d = filterByTanggal(_srv(sumber[kunci], kunci), laporanFilter.tglMulai, laporanFilter.tglAkhir)
           .filter(function(x) { return String(x.id_guru) === idg; });
         d.sort(function(a, b) { return new Date(b.tgl) - new Date(a.tgl); });
         return d.slice(0, 10);
@@ -5032,13 +5247,9 @@
     // Dipisah dari kepsekAksesDataPengguna() supaya penyaringan langsung
     // hanya menggambar ulang tabelnya, sehingga fokus ketikan tidak hilang.
     function htmlTabelPengguna() {
-      let users = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_users'));
-        users = Array.isArray(isi) ? isi.filter(function(u) { return u && u.id !== undefined; }) : [];
-      } catch (e) {
-        users = [];
-      }
+      const users = _srv('users', 'sip_users').filter(function(u) {
+        return u && u.id !== undefined;
+      });
 
       const cari = String(filterPengguna.cari || '').trim().toLowerCase();
       const role = String(filterPengguna.role || '').toLowerCase();
@@ -5081,7 +5292,7 @@
                  '<td><span class="badge badge--' + (aktif ? 'aktif' : 'merah') + '">' +
                    (aktif ? 'Aktif' : 'Nonaktif') + '</span></td>' +
                  '<td><div class="aksi-grup">' +
-                   '<button class="btn-aksi btn-edit" onclick="resetPinUser(' + u.id + ')">' +
+                   '<button class="btn-aksi btn-edit" id="reset-pin-' + u.id + '" onclick="resetPinUser(' + u.id + ')">' +
                      '<i class="fa-solid fa-key"></i>Reset PIN</button>' +
                    '<button class="btn-aksi btn-detail" title="Lihat detail" onclick="lihatDetailUser(' + u.id + ')">' +
                      '<i class="fa-solid fa-eye"></i></button>' +
@@ -5101,6 +5312,18 @@
 
     // Modul Akses Data Pengguna milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekAksesDataPengguna() {
+      if (MODE_API) return '<div id="isi-akses-pengguna" data-muat="aksesPengguna"></div>';
+      return _htmlIsiAksesPengguna();
+    }
+
+    PEMUAT.aksesPengguna = function() {
+      return _muatModul('isi-akses-pengguna', [['getUsers']], function(d) {
+        _srvIsi({ users: d[0] });
+        return _htmlIsiAksesPengguna();
+      }, 'aksesPengguna', 5);
+    };
+
+    function _htmlIsiAksesPengguna() {
       const opsiRole = ['', 'kepsek', 'ktu', 'bendahara', 'guru', 'walimurid'].map(function(r) {
         const terpilih = String(filterPengguna.role) === r ? ' selected' : '';
         return '<option value="' + r + '"' + terpilih + '>' + (r === '' ? 'Semua Role' : r) + '</option>';
@@ -5147,13 +5370,7 @@
 
     // Popup rincian satu pengguna. PIN tidak pernah ikut ditampilkan.
     function lihatDetailUser(userId) {
-      let users = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_users'));
-        users = Array.isArray(isi) ? isi : [];
-      } catch (e) {
-        users = [];
-      }
+      const users = _srv('users', 'sip_users');
 
       const u = users.find(function(x) { return x && String(x.id) === String(userId); });
       if (!u) {
@@ -5229,15 +5446,9 @@
     }
 
     // Buat PIN baru enam digit untuk satu pengguna
-    function resetPinUser(userId) {
+    async function resetPinUser(userId) {
       const sesi = getSession();
-      let users = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_users'));
-        users = Array.isArray(isi) ? isi : [];
-      } catch (e) {
-        users = [];
-      }
+      const users = _srv('users', 'sip_users');
 
       const i = users.findIndex(function(u) { return u && String(u.id) === String(userId); });
       if (i === -1) {
@@ -5247,6 +5458,13 @@
 
       const nama = users[i].nama || 'Pengguna';
       if (!confirm('Reset PIN untuk ' + nama + '? PIN baru akan dibuat otomatis.')) return;
+
+      if (MODE_API) {
+        // PIN baru dibuat server dan disebut pada pesan balasannya
+        await _kirimAksi('reset-pin-' + userId, 'resetPin',
+          { userId: userId }, 'aksesPengguna', 'Mereset');
+        return;
+      }
 
       // PIN acak enam digit, 100000 sampai 999999
       const pinBaru = String(Math.floor(100000 + Math.random() * 900000));
@@ -5560,6 +5778,20 @@
 
     // Modul Pengumuman Tagihan milik Bendahara, mengembalikan HTML siap tampil
     function bendaharaTagihan() {
+      if (MODE_API) return '<div id="isi-peng-tagihan" data-muat="pengumumanTagihan"></div>';
+      return _htmlIsiPengTagihan();
+    }
+
+    PEMUAT.pengumumanTagihan = function() {
+      return _muatModul('isi-peng-tagihan',
+        [['getBiaya'], ['getSiswa'], ['getTagihan'], ['getPengumuman']],
+        function(d) {
+          _srvIsi({ biaya: d[0], siswa: d[1], tagihan: d[2], pengumuman: d[3] });
+          return _htmlIsiPengTagihan();
+        }, 'pengumumanTagihan', 4);
+    };
+
+    function _htmlIsiPengTagihan() {
       const sesi = getSession();
       const baca = function(kunci) {
         try {
@@ -5570,9 +5802,12 @@
         }
       };
 
-      const siswa = baca('sip_siswa');
-      const users = baca('sip_users');
-      const biaya = baca('sip_biaya');
+      const siswa = _srv('siswa', 'sip_siswa');
+      // Bendahara tidak berhak membaca daftar akun, jadi nama wali diambil
+      // dari data siswa itu sendiri
+      const dariServer = Array.isArray(SRV.siswa);
+      const users = dariServer ? [] : _bacaArr('sip_users');
+      const biaya = _srv('biaya', 'sip_biaya');
       const menunggak = daftarTagihanMenunggak();
 
       // --- Bagian atas: daftar siswa menunggak ---
@@ -5589,9 +5824,12 @@
           const s = siswa.find(function(x) { return x && String(x.id) === String(t.id_siswa); });
           const b = biaya.find(function(x) { return x && String(x.id) === String(t.id_biaya); });
 
-          // Nama wali murid dicari dari akun pengguna
+          // Nama wali murid: dari kolom siswa bila datanya dari server,
+          // selain itu dicari pada daftar akun
           let namaWali = '-';
-          if (s && s.id_wali_murid !== undefined && s.id_wali_murid !== null && s.id_wali_murid !== '') {
+          if (s && dariServer) {
+            namaWali = s.nama_ayah || s.nama_ibu || s.email_wali_murid || '-';
+          } else if (s && s.id_wali_murid !== undefined && s.id_wali_murid !== null && s.id_wali_murid !== '') {
             const w = users.find(function(x) { return x && String(x.id) === String(s.id_wali_murid); });
             if (w) namaWali = w.nama || '-';
           }
@@ -5638,12 +5876,12 @@
             'placeholder="Kepada Yth. Bapak/Ibu wali murid..."></textarea>' +
           '<p class="info-penerima">Pengumuman akan dikirim ke ' +
             '<strong id="jumlahPenerima">0</strong> wali murid yang dipilih</p>' +
-          '<button class="btn btn--full" onclick="kirimPengumumanTagihan()">' +
+          '<button class="btn btn--full" id="tagihan-kirim" onclick="kirimPengumumanTagihan()">' +
             '<i class="fa-solid fa-paper-plane"></i> Kirim Pengumuman</button>' +
         '</div>';
 
       // --- Bagian bawah: riwayat pengumuman tagihan milik bendahara ini ---
-      const riwayat = baca('sip_pengumuman').filter(function(p) {
+      const riwayat = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && p.tipe === 'tagihan' && sesi && String(p.dari_id_user) === String(sesi.id);
       });
 
@@ -5745,7 +5983,7 @@
     }
 
     // Kirim pengumuman tagihan ke wali murid yang dipilih
-    function kirimPengumumanTagihan() {
+    async function kirimPengumumanTagihan() {
       const sesi = getSession();
       const kolomPesan = document.getElementById('pesanTagihan');
       if (!kolomPesan) {
@@ -5768,6 +6006,14 @@
       const pesan = kolomPesan.value.trim();
       if (!pesan) {
         showNotif('Isi pesan tidak boleh kosong', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        // Pengumuman tagihan berstatus pending_KTU, disetujui KTU lalu Kepsek
+        await _kirimAksi('tagihan-kirim', 'createPengumuman',
+          { data: { tipe: 'tagihan', konten: pesan, target: 'walimurid' } },
+          'pengumumanTagihan', 'Mengirim');
         return;
       }
 
@@ -5833,14 +6079,14 @@
         }
       };
 
-      const p = baca('sip_pengumuman').find(function(x) { return x && String(x.id) === String(id); });
+      const p = _srv('pengumuman', 'sip_pengumuman').find(function(x) { return x && String(x.id) === String(id); });
       if (!p) {
         showNotif('Pengumuman tidak ditemukan', 'error');
         return;
       }
 
-      const siswa = baca('sip_siswa');
-      const users = baca('sip_users');
+      const siswa = _srv('siswa', 'sip_siswa');
+      const users = _srv('users', 'sip_users');
       const dua = function(n) { return String(n).padStart(2, '0'); };
 
       let tgl = '-';
@@ -5956,8 +6202,8 @@
 
     // Rangkum satu transaksi menjadi kolom-kolom siap tampil
     function _barisPembayaran(t) {
-      const siswa = _bacaArr('sip_siswa');
-      const biaya = _bacaArr('sip_biaya');
+      const siswa = _srv('siswa', 'sip_siswa');
+      const biaya = _srv('biaya', 'sip_biaya');
       const s = siswa.find(function(x) { return x && String(x.id) === String(t.id_siswa); });
       const b = biaya.find(function(x) { return x && String(x.id) === String(t.id_biaya); });
       return {
@@ -5974,7 +6220,7 @@
       const kini = new Date();
       const dua = function(n) { return String(n).padStart(2, '0'); };
 
-      const hariIni = _bacaArr('sip_transaksi').filter(function(t) {
+      const hariIni = _srv('transaksi', 'sip_transaksi').filter(function(t) {
         if (!t || String(t.tipe || '').toLowerCase() !== 'pemasukan') return false;
         if (!t.tgl) return false;
         const d = new Date(t.tgl);
@@ -6020,7 +6266,7 @@
 
     // Tabel riwayat seluruh pembayaran, mengikuti penyaring tanggal bila ada
     function htmlRiwayatSemua() {
-      let daftar = _bacaArr('sip_transaksi').filter(function(t) {
+      let daftar = _srv('transaksi', 'sip_transaksi').filter(function(t) {
         return t && String(t.tipe || '').toLowerCase() === 'pemasukan';
       });
 
@@ -6071,6 +6317,20 @@
 
     // Modul Pencatatan Pembayaran milik Bendahara, mengembalikan HTML siap tampil
     function bendaharaPembayaran() {
+      if (MODE_API) return '<div id="isi-catat-bayar" data-muat="catatPembayaran"></div>';
+      return _htmlIsiPembayaran();
+    }
+
+    PEMUAT.catatPembayaran = function() {
+      return _muatModul('isi-catat-bayar',
+        [['getSiswa'], ['getBiaya'], ['getTagihan'], ['getTransaksi']],
+        function(d) {
+          _srvIsi({ siswa: d[0], biaya: d[1], tagihan: d[2], transaksi: d[3] });
+          return _htmlIsiPembayaran();
+        }, 'catatPembayaran', 4);
+    };
+
+    function _htmlIsiPembayaran() {
       const ymd = function(d) {
         const dua = function(n) { return String(n).padStart(2, '0'); };
         return d.getFullYear() + '-' + dua(d.getMonth() + 1) + '-' + dua(d.getDate());
@@ -6078,7 +6338,7 @@
 
       // --- Daftar siswa, seluruhnya termasuk yang datanya masih pending ---
       // Entri rusak disaring lebih dulu supaya pengurutan tidak gagal
-      const siswa = _bacaArr('sip_siswa').filter(function(s) {
+      const siswa = _srv('siswa', 'sip_siswa').filter(function(s) {
         return s && s.id !== undefined && s.id !== null;
       });
       siswa.sort(function(a, b) {
@@ -6090,7 +6350,7 @@
       }).join('');
 
       // --- Daftar biaya yang masih aktif ---
-      const biaya = _bacaArr('sip_biaya').filter(function(b) {
+      const biaya = _srv('biaya', 'sip_biaya').filter(function(b) {
         return b && b.id !== undefined && b.id !== null && b.status_aktif !== false;
       });
       const pilihanBiaya = biaya.map(function(b) {
@@ -6135,7 +6395,7 @@
               '<input type="file" id="bayarBukti" class="input-file" accept="image/*,application/pdf">' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="catatPembayaran()">' +
+          '<button class="btn btn--full" id="bayar-catat" onclick="catatPembayaran()">' +
             '<i class="fa-solid fa-save"></i> Catat Pembayaran</button>' +
           '<p class="catatan-kecil">Status tagihan akan berubah menjadi Lunas setelah approval final</p>' +
         '</div>';
@@ -6189,7 +6449,7 @@
     }
 
     // Simpan satu pembayaran dan tandai tagihan terkait menjadi lunas
-    function catatPembayaran() {
+    async function catatPembayaran() {
       const sesi = getSession();
       const elSiswa = document.getElementById('bayarSiswa');
       const elBiaya = document.getElementById('bayarBiaya');
@@ -6217,8 +6477,8 @@
         return;
       }
 
-      const siswa = _bacaArr('sip_siswa');
-      const biaya = _bacaArr('sip_biaya');
+      const siswa = _srv('siswa', 'sip_siswa');
+      const biaya = _srv('biaya', 'sip_biaya');
       const s = siswa.find(function(x) { return x && String(x.id) === String(elSiswa.value); });
       const b = biaya.find(function(x) { return x && String(x.id) === String(elBiaya.value); });
       if (!s || !b) {
@@ -6227,6 +6487,23 @@
       }
 
       const namaSiswa = s.nama_lengkap || s.nama || '-';
+
+      if (MODE_API) {
+        // Bendahara mencatat pembayaran atas satu tagihan yang belum lunas
+        const tagihanSiswa = _srv('tagihan', 'sip_tagihan').filter(function(g) {
+          return g && String(g.id_siswa) === String(elSiswa.value) &&
+                 String(g.id_biaya) === String(elBiaya.value) &&
+                 String(g.status_bayar || '').toLowerCase() !== 'lunas';
+        });
+        if (tagihanSiswa.length === 0) {
+          showNotif('Tidak ada tagihan yang cocok dan belum lunas untuk siswa ini', 'error');
+          return;
+        }
+        await _kirimAksi('bayar-catat', 'catatPembayaran',
+          { tagihanId: tagihanSiswa[0].id, buktiUrl: (elBukti && elBukti.files && elBukti.files[0]) ? elBukti.files[0].name : '' },
+          'catatPembayaran', 'Mencatat');
+        return;
+      }
 
       // Tanggal bayar mengikuti isian, jamnya memakai waktu saat pencatatan
       let tglBayar = new Date();
@@ -6245,7 +6522,7 @@
         namaBukti = elBukti.files[0].name;
       }
 
-      const transaksi = _bacaArr('sip_transaksi');
+      const transaksi = _srv('transaksi', 'sip_transaksi');
 
       // Id berbasis Date.now(), dinaikkan bila angkanya sudah terpakai
       let idBaru = Date.now();
@@ -6321,7 +6598,7 @@
     // Saldo kas: pemasukan dikurangi pengeluaran, hanya yang sudah disetujui
     function hitungSaldo() {
       let masuk = 0, keluar = 0;
-      _bacaArr('sip_transaksi').forEach(function(t) {
+      _srv('transaksi', 'sip_transaksi').forEach(function(t) {
         if (!t || String(t.status_approval || '') !== 'approved') return;
         const jumlah = Number(t.jumlah) || 0;
         const tipe = String(t.tipe || '').toLowerCase();
@@ -6374,7 +6651,7 @@
 
     // Susun tabel riwayat transaksi kas sesuai penyaring yang sedang aktif
     function htmlRiwayatKas() {
-      let daftar = _bacaArr('sip_transaksi').filter(function(t) {
+      let daftar = _srv('transaksi', 'sip_transaksi').filter(function(t) {
         return t && t.id !== undefined && t.id !== null;
       });
 
@@ -6439,6 +6716,18 @@
 
     // Modul Manajemen Kas milik Bendahara, mengembalikan HTML siap tampil
     function bendaharaKas() {
+      if (MODE_API) return '<div id="isi-kas" data-muat="manajemenKas"></div>';
+      return _htmlIsiKas();
+    }
+
+    PEMUAT.manajemenKas = function() {
+      return _muatModul('isi-kas', [['getTransaksi']], function(d) {
+        _srvIsi({ transaksi: d[0] });
+        return _htmlIsiKas();
+      }, 'manajemenKas', 4);
+    };
+
+    function _htmlIsiKas() {
       const ymd = function(d) {
         const dua = function(n) { return String(n).padStart(2, '0'); };
         return d.getFullYear() + '-' + dua(d.getMonth() + 1) + '-' + dua(d.getDate());
@@ -6481,7 +6770,7 @@
                 'placeholder="contoh: Beli alat tulis kantor..."></textarea>' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="catatTransaksi()">' +
+          '<button class="btn btn--full" id="kas-catat" onclick="catatTransaksi()">' +
             '<i class="fa-solid fa-save"></i> Catat Transaksi</button>' +
         '</div>';
 
@@ -6520,7 +6809,7 @@
     }
 
     // Simpan satu transaksi kas
-    function catatTransaksi() {
+    async function catatTransaksi() {
       const sesi = getSession();
       const elTipe = document.getElementById('kasTipe');
       const elJumlah = document.getElementById('kasJumlah');
@@ -6550,6 +6839,15 @@
         return;
       }
 
+      if (MODE_API) {
+        // Ambang persetujuan pengeluaran juga diperiksa di server
+        await _kirimAksi('kas-catat', 'catatTransaksi', { data: {
+          tipe: tipe, jumlah: jumlah, deskripsi: deskripsi,
+          tgl: (elTanggal && elTanggal.value) ? elTanggal.value : undefined
+        } }, 'manajemenKas', 'Mencatat');
+        return;
+      }
+
       // Pengeluaran besar menunggu persetujuan Kepala Sekolah,
       // selain itu langsung tercatat
       const perluApproval = (tipe === 'pengeluaran' && jumlah > BATAS_PENGELUARAN_KAS);
@@ -6566,7 +6864,7 @@
         }
       }
 
-      const transaksi = _bacaArr('sip_transaksi');
+      const transaksi = _srv('transaksi', 'sip_transaksi');
 
       // Id berbasis Date.now(), dinaikkan bila angkanya sudah terpakai
       let idBaru = Date.now();
@@ -6607,11 +6905,17 @@
     }
 
     // Batalkan transaksi yang masih menunggu persetujuan
-    function batalTransaksi(id) {
+    async function batalTransaksi(id) {
+      if (MODE_API) {
+        if (!confirm('Batalkan transaksi ini?')) return;
+        await _kirimAksi('kas-batal-' + id, 'batalTransaksi', { idTransaksi: id }, 'manajemenKas', 'Membatalkan');
+        return;
+      }
+
       if (!confirm('Batalkan transaksi ini?')) return;
 
       const sesi = getSession();
-      const transaksi = _bacaArr('sip_transaksi');
+      const transaksi = _srv('transaksi', 'sip_transaksi');
       const i = transaksi.findIndex(function(t) { return t && String(t.id) === String(id); });
       if (i === -1) {
         showNotif('Transaksi tidak ditemukan', 'error');
@@ -6723,8 +7027,8 @@
         return '<p class="pesan-info">Tidak ada tagihan untuk periode yang dipilih</p>';
       }
 
-      const siswa = _bacaArr('sip_siswa');
-      const biaya = _bacaArr('sip_biaya');
+      const siswa = _srv('siswa', 'sip_siswa');
+      const biaya = _srv('biaya', 'sip_biaya');
       const kini = new Date();
       let nLunas = 0, nBelum = 0, nMenunggak = 0;
 
@@ -6779,7 +7083,7 @@
         return '<p class="pesan-info">Tidak ada pemasukan untuk periode yang dipilih</p>';
       }
 
-      const biaya = _bacaArr('sip_biaya').filter(function(b) {
+      const biaya = _srv('biaya', 'sip_biaya').filter(function(b) {
         return b && b.id !== undefined && b.id !== null;
       });
 
@@ -6843,6 +7147,20 @@
 
     // Modul Laporan Keuangan milik Bendahara, mengembalikan HTML siap tampil
     function bendaharaLaporan() {
+      if (MODE_API) return '<div id="isi-lap-keuangan" data-muat="laporanKeuangan"></div>';
+      return _htmlIsiLaporanKeuangan();
+    }
+
+    PEMUAT.laporanKeuangan = function() {
+      return _muatModul('isi-lap-keuangan',
+        [['getTransaksi'], ['getTagihan'], ['getSiswa'], ['getBiaya']],
+        function(d) {
+          _srvIsi({ transaksi: d[0], tagihan: d[1], siswa: d[2], biaya: d[3] });
+          return _htmlIsiLaporanKeuangan();
+        }, 'laporanKeuangan', 4);
+    };
+
+    function _htmlIsiLaporanKeuangan() {
       const ymd = function(d) {
         const dua = function(n) { return String(n).padStart(2, '0'); };
         return d.getFullYear() + '-' + dua(d.getMonth() + 1) + '-' + dua(d.getDate());
@@ -6919,7 +7237,7 @@
         const batasAkhir = laporanKeu.akhir ? new Date(laporanKeu.akhir + 'T23:59:59') : null;
         const kini = new Date();
 
-        const tagihan = _bacaArr('sip_tagihan').filter(function(t) {
+        const tagihan = _srv('tagihan', 'sip_tagihan').filter(function(t) {
           if (!t || t.id === undefined || t.id === null) return false;
           if (!t.jatuh_tempo) return false;
           const jt = new Date(t.jatuh_tempo);
@@ -6963,7 +7281,7 @@
 
       } else {
         // --- Arus kas dan pemasukan per biaya memakai data transaksi ---
-        const transaksi = filterLaporan(_bacaArr('sip_transaksi'));
+        const transaksi = filterLaporan(_srv('transaksi', 'sip_transaksi'));
 
         let masuk = 0, keluar = 0;
         transaksi.forEach(function(t) {
@@ -7039,10 +7357,23 @@
 
     // Modul Usulan Biaya milik Bendahara, mengembalikan HTML siap tampil
     function bendaharaUsulanBiaya() {
+      if (MODE_API) return '<div id="isi-usulan-bendahara" data-muat="usulanBiayaBendahara"></div>';
+      return _htmlIsiUsulanBiaya();
+    }
+
+    PEMUAT.usulanBiayaBendahara = function() {
+      return _muatModul('isi-usulan-bendahara', [['getBiaya'], ['getUsulanBiaya']],
+        function(d) {
+          _srvIsi({ biaya: d[0], usulanBiaya: d[1] });
+          return _htmlIsiUsulanBiaya();
+        }, 'usulanBiayaBendahara', 4);
+    };
+
+    function _htmlIsiUsulanBiaya() {
       const sesi = getSession();
 
       // --- Bagian atas: daftar biaya yang masih aktif ---
-      const biaya = _bacaArr('sip_biaya').filter(function(b) {
+      const biaya = _srv('biaya', 'sip_biaya').filter(function(b) {
         return b && b.id !== undefined && b.id !== null && b.status_aktif !== false;
       });
 
@@ -7107,7 +7438,7 @@
               '<span class="info-badge"><i class="fa-solid fa-circle-info"></i>' +
                 'Usulan ini akan dikirim ke Kepala Sekolah untuk disetujui</span>' +
               '<div class="form-aksi">' +
-                '<button class="btn" onclick="kirimUsulan()">' +
+                '<button class="btn" id="usulan-kirim" onclick="kirimUsulan()">' +
                   '<i class="fa-solid fa-paper-plane"></i> Kirim Usulan</button>' +
                 '<button class="btn btn--abu" onclick="batalUsulan()">' +
                   '<i class="fa-solid fa-xmark"></i> Batal</button>' +
@@ -7117,7 +7448,7 @@
       }
 
       // --- Bagian bawah: riwayat usulan milik bendahara yang sedang masuk ---
-      const riwayat = _bacaArr('sip_usulan_biaya').filter(function(u) {
+      const riwayat = _srv('usulanBiaya', 'sip_usulan_biaya').filter(function(u) {
         return u && u.id !== undefined && sesi && String(u.id_pengaju) === String(sesi.id);
       });
 
@@ -7185,7 +7516,7 @@
     }
 
     // Kirim satu usulan perubahan nominal biaya
-    function kirimUsulan() {
+    async function kirimUsulan() {
       const sesi = getSession();
       const elNominal = document.getElementById('usulanNominal');
       const elAlasan = document.getElementById('usulanAlasan');
@@ -7206,7 +7537,13 @@
         return;
       }
 
-      const b = _bacaArr('sip_biaya').find(function(x) {
+      if (MODE_API) {
+        await _kirimAksi('usulan-kirim', 'usulanBiaya',
+          { idBiaya: usulanBiayaAktif, nominalBaru: nominal }, 'usulanBiayaBendahara', 'Mengirim');
+        return;
+      }
+
+      const b = _srv('biaya', 'sip_biaya').find(function(x) {
         return x && String(x.id) === String(usulanBiayaAktif);
       });
       if (!b) {
@@ -7331,13 +7668,29 @@
 
     // Modul Dashboard milik KTU, mengembalikan HTML siap tampil
     function ktuDashboard() {
-      const siswa = _bacaArr('sip_siswa').filter(function(s) {
+      const kepala = '<h1 class="module-title">Dashboard KTU</h1>' +
+                     '<p class="module-sub">Ringkasan administrasi pesantren</p>';
+      if (MODE_API) return kepala + '<div id="isi-dash-ktu" data-muat="dashboardKtu"></div>';
+      return _htmlIsiDashKtu();
+    }
+
+    PEMUAT.dashboardKtu = function() {
+      return _muatModul('isi-dash-ktu',
+        [['getSiswa'], ['getUsers'], ['getPengumuman'], ['getTransaksi']],
+        function(d) {
+          _srvIsi({ siswa: d[0], users: d[1], pengumuman: d[2], transaksi: d[3] });
+          return _htmlIsiDashKtu(true);
+        }, 'dashboardKtu', 5);
+    };
+
+    function _htmlIsiDashKtu(tanpaJudul) {
+      const siswa = _srv('siswa', 'sip_siswa').filter(function(s) {
         return s && s.id !== undefined && s.id !== null;
       });
-      const users = _bacaArr('sip_users').filter(function(u) {
+      const users = _srv('users', 'sip_users').filter(function(u) {
         return u && u.id !== undefined && u.id !== null;
       });
-      const pengumuman = _bacaArr('sip_pengumuman').filter(function(p) {
+      const pengumuman = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && p.id !== undefined && p.id !== null;
       });
 
@@ -7454,8 +7807,8 @@
           '</div>' + isiPengumuman +
         '</div>';
 
-      return '<h1 class="module-title">Dashboard KTU</h1>' +
-             '<p class="module-sub">Ringkasan administrasi pesantren</p>' +
+      return (tanpaJudul ? '' : '<h1 class="module-title">Dashboard KTU</h1>' +
+             '<p class="module-sub">Ringkasan administrasi pesantren</p>') +
              '<div class="stat-grid stat-grid--dua">' + htmlKartu + '</div>' +
              '<div class="grid-dua-kolom">' + kartuSiswa + kartuPengumuman + '</div>';
     }
@@ -7484,7 +7837,7 @@
     // Ambil pengumuman global milik KTU yang sedang masuk, sesuai status
     function _pengumumanGlobalKtu(status) {
       const sesi = getSession();
-      const hasil = _bacaArr('sip_pengumuman').filter(function(p) {
+      const hasil = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && p.tipe === 'global' && p.status === status &&
                sesi && String(p.dari_id_user) === String(sesi.id);
       });
@@ -7575,6 +7928,18 @@
 
     // Modul Pengumuman Global milik KTU, mengembalikan HTML siap tampil
     function ktuPengumumanGlobal() {
+      if (MODE_API) return '<div id="isi-peng-global" data-muat="pengumumanGlobal"></div>';
+      return _htmlIsiPengumumanGlobal();
+    }
+
+    PEMUAT.pengumumanGlobal = function() {
+      return _muatModul('isi-peng-global', [['getPengumuman']], function(d) {
+        _srvIsi({ pengumuman: d[0] });
+        return _htmlIsiPengumumanGlobal();
+      }, 'pengumumanGlobal', 4);
+    };
+
+    function _htmlIsiPengumumanGlobal() {
       const opsiTarget = [
         ['', '-- Pilih Target Penerima --'],
         ['semua', 'Semua Role'],
@@ -7597,7 +7962,7 @@
           '<select id="globalTarget" class="input" onchange="perbaruiInfoGlobal()">' + opsiTarget + '</select>' +
           '<span class="info-badge" id="infoGlobal"><i class="fa-solid fa-circle-info"></i>' +
             'Pengumuman ini akan dikirim ke [target] dan memerlukan persetujuan Kepala Sekolah</span>' +
-          '<button class="btn btn--full" onclick="kirimPengumumanGlobal()">' +
+          '<button class="btn btn--full" id="peng-global-kirim" onclick="kirimPengumumanGlobal()">' +
             '<i class="fa-solid fa-paper-plane"></i> Kirim Pengumuman</button>' +
         '</div>';
 
@@ -7630,7 +7995,7 @@
     }
 
     // Simpan satu pengumuman global baru berstatus menunggu Kepala Sekolah
-    function kirimPengumumanGlobal() {
+    async function kirimPengumumanGlobal() {
       const sesi = getSession();
       const elJudul = document.getElementById('globalJudul');
       const elKonten = document.getElementById('globalKonten');
@@ -7654,6 +8019,13 @@
 
       if (!elTarget.value) {
         showNotif('Target penerima harus dipilih', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('peng-global-kirim', 'createPengumuman',
+          { data: { tipe: 'global', judul: judul, konten: konten, target: elTarget.value } },
+          'pengumumanGlobal', 'Mengirim');
         return;
       }
 
@@ -7739,7 +8111,7 @@
     // Ambil akun yang didaftarkan oleh KTU yang sedang masuk
     function _akunBuatanKtu() {
       const sesi = getSession();
-      const hasil = _bacaArr('sip_users').filter(function(u) {
+      const hasil = _srv('users', 'sip_users').filter(function(u) {
         return u && u.id !== undefined && sesi &&
                String(u.dibuat_oleh || '') === String(sesi.nama);
       });
@@ -7857,6 +8229,18 @@
 
     // Modul Pendaftaran Akun milik KTU, mengembalikan HTML siap tampil
     function ktuPendaftaranAkun() {
+      if (MODE_API) return '<div id="isi-daftar-akun" data-muat="pendaftaranAkun"></div>';
+      return _htmlIsiPendaftaranAkun();
+    }
+
+    PEMUAT.pendaftaranAkun = function() {
+      return _muatModul('isi-daftar-akun', [['getUsers']], function(d) {
+        _srvIsi({ users: d[0] });
+        return _htmlIsiPendaftaranAkun();
+      }, 'pendaftaranAkun', 4);
+    };
+
+    function _htmlIsiPendaftaranAkun() {
       // Nilai option menggabungkan role dan subrole, dipisah tanda |
       const opsiRole = [
         ['', 'Pilih Role'],
@@ -7893,7 +8277,7 @@
               '<select id="akunRole" class="input">' + opsiRole + '</select>' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="daftarkanAkun()">' +
+          '<button class="btn btn--full" id="akun-daftar" onclick="daftarkanAkun()">' +
             '<i class="fa-solid fa-user-plus"></i> Daftarkan Akun</button>' +
         '</div>';
 
@@ -7926,7 +8310,7 @@
     }
 
     // Simpan satu akun baru berstatus nonaktif
-    function daftarkanAkun() {
+    async function daftarkanAkun() {
       const sesi = getSession();
       const elNama = document.getElementById('akunNama');
       const elEmail = document.getElementById('akunEmail');
@@ -7964,7 +8348,16 @@
         return;
       }
 
-      const users = _bacaArr('sip_users');
+      if (MODE_API) {
+        // Nilai option berbentuk "role|subrole"
+        const bagian = String(elRole.value).split('|');
+        await _kirimAksi('akun-daftar', 'createAccount',
+          { nama: nama, email: email, pin: pin, role: bagian[0], subrole: bagian[1] || '' },
+          'pendaftaranAkun', 'Mendaftarkan');
+        return;
+      }
+
+      const users = _srv('users', 'sip_users');
 
       // Email tidak boleh dipakai dua kali
       const kembar = users.some(function(u) {
@@ -8770,7 +9163,7 @@
 
     // Daftar sepuluh siswa terbaru dalam bentuk kartu ringkas
     function htmlDaftarSiswaTerbaru() {
-      const siswa = _bacaArr('sip_siswa').filter(function(s) { return s && s.id !== undefined; });
+      const siswa = _srv('siswa', 'sip_siswa').filter(function(s) { return s && s.id !== undefined; });
       if (siswa.length === 0) {
         return '<p class="pesan-info">Belum ada data siswa</p>';
       }
@@ -8802,8 +9195,21 @@
 
     // Modul Input Data Siswa milik KTU, mengembalikan HTML siap tampil
     function ktuInputDataSiswa() {
-      const kelas = _bacaArr('sip_kelas').filter(function(k) { return k && k.id !== undefined; });
-      const waliAktif = _bacaArr('sip_users').filter(function(u) {
+      if (MODE_API) return '<div id="isi-input-siswa" data-muat="inputSiswa"></div>';
+      return _htmlIsiInputSiswa();
+    }
+
+    PEMUAT.inputSiswa = function() {
+      return _muatModul('isi-input-siswa', [['getKelas'], ['getUsers'], ['getSiswa']],
+        function(d) {
+          _srvIsi({ kelas: d[0], users: d[1], siswa: d[2] });
+          return _htmlIsiInputSiswa();
+        }, 'inputSiswa', 4);
+    };
+
+    function _htmlIsiInputSiswa() {
+      const kelas = _srv('kelas', 'sip_kelas').filter(function(k) { return k && k.id !== undefined; });
+      const waliAktif = _srv('users', 'sip_users').filter(function(u) {
         return u && u.id !== undefined && String(u.role || '').toLowerCase() === 'walimurid' && u.aktif !== false;
       });
 
@@ -8892,7 +9298,7 @@
             'Meskipun pending, data siswa TETAP BISA digunakan di sistem (tagihan, jadwal, dan lainnya) ' +
             'dengan label "Menunggu Verifikasi"</span>' +
           bagian1 + bagian2 + bagian3 + bagian4 +
-          '<button class="btn btn--full" onclick="simpanDataSiswa()">' +
+          '<button class="btn btn--full" id="siswa-simpan" onclick="simpanDataSiswa()">' +
             '<i class="fa-solid fa-save"></i> Simpan Data Siswa</button>' +
           '<button class="btn btn--abu btn--full" style="margin-top:10px" onclick="resetFormSiswa()">' +
             '<i class="fa-solid fa-sync"></i> Reset Form</button>' +
@@ -9017,7 +9423,7 @@
     }
 
     // Simpan satu data siswa baru berstatus pending
-    function simpanDataSiswa() {
+    async function simpanDataSiswa() {
       const sesi = getSession();
       const ambil = function(id) {
         const el = document.getElementById(id);
@@ -9053,15 +9459,37 @@
       let emailWali = '';
 
       if (pilihanWali === '__baru__') {
+        if (MODE_API) {
+          // Akun wali baru dibuat lewat modul Pendaftaran Akun supaya
+          // alur persetujuannya tidak terlewat
+          showNotif('Buat akun wali murid lewat menu Pendaftaran Akun dulu, lalu pilih namanya di sini', 'error');
+          return;
+        }
         idWali = buatAkunWaliMuridBaru();
         if (idWali === null) return;   // pesan galat sudah ditampilkan
         emailWali = ambil('waliEmail');
       } else if (pilihanWali) {
         idWali = isNaN(Number(pilihanWali)) ? pilihanWali : Number(pilihanWali);
-        const w = _bacaArr('sip_users').find(function(u) {
+        const w = _srv('users', 'sip_users').find(function(u) {
           return u && String(u.id) === String(idWali);
         });
         emailWali = w ? (w.email || '') : '';
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('siswa-simpan', 'inputSiswa', { data: {
+          nis: nis, nisn: nisn, nama: nama,
+          nama_panggilan: ambil('siswaPanggilan'),
+          tempat_lahir: ambil('siswaTempatLahir'), tanggal_lahir: tglLahir,
+          jenis_kelamin: ambil('siswaJk'), agama: ambil('siswaAgama'),
+          kewarganegaraan: ambil('siswaKewarganegaraan'),
+          alamat_domisili: ambil('siswaAlamat'),
+          id_kelas: idKelas, tahun_masuk: ambil('siswaTahunMasuk'),
+          nama_ayah: ambil('siswaNamaAyah'), nama_ibu: ambil('siswaNamaIbu'),
+          alamat_orangtua: ambil('siswaAlamatOrtu'), no_hp_orangtua: hpOrtu,
+          id_wali_murid: idWali, email_wali_murid: emailWali
+        } }, 'inputSiswa', 'Menyimpan');
+        return;
       }
 
       let idBaru = Date.now();
@@ -9250,10 +9678,14 @@
     // Ambil daftar tahun ajaran. Bila belum ada satu pun, dibuatkan tahun
     // ajaran berjalan: bulan Juli ke atas dihitung sebagai tahun ajaran baru.
     function _pastikanTahunAjaran() {
-      const tersimpan = _bacaArr('sip_tahun_ajaran').filter(function(t) {
+      const tersimpan = _srv('tahunAjaran', 'sip_tahun_ajaran').filter(function(t) {
         return t && t.tahun;
       });
       if (tersimpan.length > 0) return tersimpan;
+
+      // Pada mode server daftar kosong berarti memang belum ada isinya,
+      // jadi jangan diisi contoh buatan sendiri
+      if (MODE_API) return [];
 
       const sekarang = new Date();
       const awal = (sekarang.getMonth() >= 6) ? sekarang.getFullYear() : sekarang.getFullYear() - 1;
@@ -9265,7 +9697,7 @@
     // Periksa apakah jadwal baru berbenturan dengan jadwal yang sudah ada.
     // excludeId dipakai saat menyunting agar jadwal itu tidak bentrok dengan dirinya sendiri.
     function cekBentrok(id_kelas, id_guru, hari, jam_mulai, jam_selesai, excludeId) {
-      const jadwal = _bacaArr('sip_jadwal').filter(function(j) {
+      const jadwal = _srv('jadwal', 'sip_jadwal').filter(function(j) {
         return j && j.id !== undefined;
       });
 
@@ -9310,7 +9742,7 @@
 
     // Tabel jadwal untuk kelas dan tahun ajaran yang sedang dipilih
     function htmlTabelJadwal() {
-      let daftar = _bacaArr('sip_jadwal').filter(function(j) {
+      let daftar = _srv('jadwal', 'sip_jadwal').filter(function(j) {
         return j && j.id !== undefined &&
                String(j.id_kelas) === String(jadwalPilihan.idKelas) &&
                String(j.tahun_ajaran || '') === String(jadwalPilihan.tahun);
@@ -9373,9 +9805,22 @@
 
     // Modul Jadwal Pelajaran milik KTU, mengembalikan HTML siap tampil
     function ktuJadwal() {
+      if (MODE_API) return '<div id="isi-jadwal" data-muat="jadwalPelajaran"></div>';
       _pastikanPenyimpananJadwal();
+      return _htmlIsiJadwal();
+    }
 
-      const kelas = _bacaArr('sip_kelas').filter(function(k) { return k && k.id !== undefined; });
+    PEMUAT.jadwalPelajaran = function() {
+      return _muatModul('isi-jadwal',
+        [['getJadwal'], ['getKelas'], ['getMapel'], ['getUsers'], ['getTahunAjaran']],
+        function(d) {
+          _srvIsi({ jadwal: d[0], kelas: d[1], mapel: d[2], users: d[3], tahunAjaran: d[4] });
+          return _htmlIsiJadwal();
+        }, 'jadwalPelajaran', 4);
+    };
+
+    function _htmlIsiJadwal() {
+      const kelas = _srv('kelas', 'sip_kelas').filter(function(k) { return k && k.id !== undefined; });
       kelas.sort(function(a, b) {
         return String(a.nama || '').localeCompare(String(b.nama || ''));
       });
@@ -9492,7 +9937,7 @@
             '</div>' +
           '</div>' +
           '<div class="filter-aksi">' +
-            '<button class="btn" onclick="simpanJadwal()">' +
+            '<button class="btn" id="jadwal-simpan" onclick="simpanJadwal()">' +
               '<i class="fa-solid fa-save"></i> Simpan Jadwal</button>' +
             (sedang
               ? '<button class="btn btn--abu" onclick="resetFormJadwal()">' +
@@ -9539,7 +9984,7 @@
     }
 
     // Simpan jadwal baru, atau perbarui jadwal yang sedang disunting
-    function simpanJadwal() {
+    async function simpanJadwal() {
       if (!jadwalPilihan.idKelas || !jadwalPilihan.tahun) {
         showNotif('Pilih kelas dan tahun ajaran terlebih dahulu', 'error');
         return;
@@ -9591,10 +10036,23 @@
         return;
       }
 
-      const jadwal = _bacaArr('sip_jadwal');
-      const namaKelas = _namaDari(_bacaArr('sip_kelas'), jadwalPilihan.idKelas, 'nama');
-      const namaMapel = _namaDari(_bacaArr('sip_mapel'), idMapel, 'nama');
-      const namaGuru = _namaDari(_bacaArr('sip_users'), idGuru, 'nama');
+      if (MODE_API) {
+        // Bentrok jadwal diperiksa ulang di server, jadi di sini cukup dikirim
+        const muatan = {
+          id_kelas: jadwalPilihan.idKelas, id_mapel: idMapel, id_guru: idGuru,
+          hari: hari, jam_mulai: jamMulai, jam_selesai: jamSelesai,
+          tahun_ajaran: jadwalPilihan.tahun
+        };
+        if (jadwalSedangDiedit !== null) muatan.id = jadwalSedangDiedit;
+        jadwalSedangDiedit = null;
+        await _kirimAksi('jadwal-simpan', 'simpanJadwal', { data: muatan }, 'jadwalPelajaran', 'Menyimpan');
+        return;
+      }
+
+      const jadwal = _srv('jadwal', 'sip_jadwal');
+      const namaKelas = _namaDari(_srv('kelas', 'sip_kelas'), jadwalPilihan.idKelas, 'nama');
+      const namaMapel = _namaDari(_srv('mapel', 'sip_mapel'), idMapel, 'nama');
+      const namaGuru = _namaDari(_srv('users', 'sip_users'), idGuru, 'nama');
       const modeEdit = (jadwalSedangDiedit !== null);
 
       if (modeEdit) {
@@ -9654,8 +10112,14 @@
     }
 
     // Hapus satu jadwal setelah dikonfirmasi
-    function hapusJadwal(id) {
-      const jadwal = _bacaArr('sip_jadwal');
+    async function hapusJadwal(id) {
+      if (MODE_API) {
+        if (!confirm('Hapus jadwal ini?')) return;
+        await _kirimAksi('jadwal-hapus-' + id, 'hapusJadwal', { idJadwal: id }, 'jadwalPelajaran', 'Menghapus');
+        return;
+      }
+
+      const jadwal = _srv('jadwal', 'sip_jadwal');
       const i = jadwal.findIndex(function(j) { return j && String(j.id) === String(id); });
       if (i === -1) {
         showNotif('Jadwal tidak ditemukan', 'error');
@@ -9717,7 +10181,7 @@
 
     // Event yang masih menunggu persetujuan Kepala Sekolah
     function htmlEventPending() {
-      const daftar = _bacaArr('sip_event').filter(function(e) {
+      const daftar = _srv('event', 'sip_event').filter(function(e) {
         return e && e.id !== undefined && String(e.status_approval || '') === 'pending';
       });
 
@@ -9768,6 +10232,18 @@
 
     // Modul Event milik KTU, mengembalikan HTML siap tampil
     function ktuEvent() {
+      if (MODE_API) return '<div id="isi-event" data-muat="eventKtu"></div>';
+      return _htmlIsiEvent();
+    }
+
+    PEMUAT.eventKtu = function() {
+      return _muatModul('isi-event', [['getEvent']], function(d) {
+        _srvIsi({ event: d[0] });
+        return _htmlIsiEvent();
+      }, 'eventKtu', 4);
+    };
+
+    function _htmlIsiEvent() {
       const opsiJenis = '<option value="">-- Pilih Jenis Event --</option>' +
         JENIS_EVENT.map(function(j) {
           return '<option value="' + j.nilai + '">' + j.teks + '</option>';
@@ -9809,7 +10285,7 @@
               '<select id="eventTarget" class="input">' + opsiTarget + '</select>' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="simpanEvent()">' +
+          '<button class="btn btn--full" id="event-simpan" onclick="simpanEvent()">' +
             '<i class="fa-solid fa-calendar-plus"></i> Simpan Event</button>' +
         '</div>';
 
@@ -9836,7 +10312,7 @@
     }
 
     // Simpan event baru dengan status menunggu persetujuan Kepala Sekolah
-    function simpanEvent() {
+    async function simpanEvent() {
       const elNama = document.getElementById('eventNama');
       const elJenis = document.getElementById('eventJenis');
       const elMulai = document.getElementById('eventMulai');
@@ -9877,8 +10353,16 @@
         return;
       }
 
+      if (MODE_API) {
+        await _kirimAksi('event-simpan', 'simpanEvent', { data: {
+          nama_event: nama, jenis: jenis, tgl_mulai: mulai,
+          tgl_selesai: selesai, deskripsi: deskripsi, target: elTarget.value
+        } }, 'eventKtu', 'Menyimpan');
+        return;
+      }
+
       const sesi = getSession();
-      const daftar = _bacaArr('sip_event');
+      const daftar = _srv('event', 'sip_event');
 
       // Nomor urut memakai waktu sekarang, dinaikkan bila ternyata sudah terpakai
       let idBaru = Date.now();
@@ -9906,8 +10390,14 @@
     }
 
     // Batalkan satu event yang masih menunggu persetujuan
-    function batalEvent(id) {
-      const daftar = _bacaArr('sip_event');
+    async function batalEvent(id) {
+      if (MODE_API) {
+        if (!confirm('Batalkan event ini?')) return;
+        await _kirimAksi('event-batal-' + id, 'batalEvent', { idEvent: id }, 'eventKtu', 'Membatalkan');
+        return;
+      }
+
+      const daftar = _srv('event', 'sip_event');
       const i = daftar.findIndex(function(e) { return e && String(e.id) === String(id); });
       if (i === -1) {
         showNotif('Event tidak ditemukan', 'error');
@@ -9960,7 +10450,7 @@
 
     // Daftar dokumen yang sudah diarsipkan, sudah disaring dan diurutkan
     function htmlDaftarArsip() {
-      let daftar = _bacaArr('sip_arsip').filter(function(d) { return d && d.id !== undefined; });
+      let daftar = _srv('arsip', 'sip_arsip').filter(function(d) { return d && d.id !== undefined; });
 
       // Pencarian judul, tidak membedakan huruf besar-kecil
       const cari = String(arsipFilter.cari || '').trim().toLowerCase();
@@ -10000,7 +10490,7 @@
                      'onclick="lihatDetailArsip(' + d.id + ')">' +
                      '<i class="fa-solid fa-eye"></i></button>' +
                    '<button class="btn-aksi btn-hapus" title="Hapus dokumen" ' +
-                     'onclick="hapusDokumen(' + d.id + ')">' +
+                     'id="arsip-hapus-' + d.id + '" onclick="hapusDokumen(' + d.id + ')">' +
                      '<i class="fa-solid fa-trash"></i></button>' +
                  '</div></td>' +
                '</tr>';
@@ -10014,6 +10504,18 @@
 
     // Modul Arsip milik KTU, mengembalikan HTML siap tampil
     function ktuArsip() {
+      if (MODE_API) return '<div id="isi-arsip" data-muat="arsipKtu"></div>';
+      return _htmlIsiArsip();
+    }
+
+    PEMUAT.arsipKtu = function() {
+      return _muatModul('isi-arsip', [['getArsip']], function(d) {
+        _srvIsi({ arsip: d[0] });
+        return _htmlIsiArsip();
+      }, 'arsipKtu', 4);
+    };
+
+    function _htmlIsiArsip() {
       const opsiKategori = '<option value="">-- Pilih Kategori --</option>' +
         KATEGORI_ARSIP.map(function(k) {
           return '<option value="' + k.nilai + '">' + k.teks + '</option>';
@@ -10052,7 +10554,7 @@
                 'placeholder="Boleh dikosongkan"></textarea>' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="uploadDokumen()">' +
+          '<button class="btn btn--full" id="arsip-simpan" onclick="uploadDokumen()">' +
             '<i class="fa-solid fa-upload"></i> Upload Dokumen</button>' +
         '</div>';
 
@@ -10100,7 +10602,7 @@
     }
 
     // Simpan satu dokumen baru. Untuk demo, yang dicatat hanya nama berkasnya.
-    function uploadDokumen() {
+    async function uploadDokumen() {
       const elJudul = document.getElementById('arsipJudul');
       const elKategori = document.getElementById('arsipKategori');
       const elFile = document.getElementById('arsipFile');
@@ -10128,8 +10630,17 @@
         return;
       }
 
+      if (MODE_API) {
+        // Isi berkasnya sendiri belum diunggah; yang dicatat adalah keterangannya
+        await _kirimAksi('arsip-simpan', 'simpanArsip', { data: {
+          judul: judul, kategori: kategori,
+          nama_file: elFile.files[0].name, akses: akses
+        } }, 'arsipKtu', 'Menyimpan');
+        return;
+      }
+
       const sesi = getSession();
-      const daftar = _bacaArr('sip_arsip');
+      const daftar = _srv('arsip', 'sip_arsip');
 
       // Nomor urut memakai waktu sekarang, dinaikkan bila ternyata sudah terpakai
       let idBaru = Date.now();
@@ -10209,8 +10720,14 @@
     }
 
     // Hapus satu dokumen dari arsip
-    function hapusDokumen(id) {
-      const daftar = _bacaArr('sip_arsip');
+    async function hapusDokumen(id) {
+      if (MODE_API) {
+        if (!confirm('Hapus dokumen ini?')) return;
+        await _kirimAksi('arsip-hapus-' + id, 'hapusArsip', { idArsip: id }, 'arsipKtu', 'Menghapus');
+        return;
+      }
+
+      const daftar = _srv('arsip', 'sip_arsip');
       const i = daftar.findIndex(function(d) { return d && String(d.id) === String(id); });
       if (i === -1) {
         showNotif('Dokumen tidak ditemukan', 'error');
@@ -10305,7 +10822,7 @@
 
     // Daftar permohonan yang masih menunggu keputusan KTU
     function htmlPermohonanPending() {
-      const pending = _bacaArr('sip_permohonan_wali').filter(function(p) {
+      const pending = _srv('permohonanWali', 'sip_permohonan_wali').filter(function(p) {
         return p && p.id !== undefined && String(p.status || '') === 'pending';
       });
 
@@ -10339,9 +10856,9 @@
                    '<button class="btn-aksi btn-detail" title="Lihat detail" ' +
                      'onclick="lihatDetailPermohonan(' + p.id + ')">' +
                      '<i class="fa-solid fa-eye"></i></button>' +
-                   '<button class="btn-aksi btn-setujui" onclick="setujuiPerubahan(' + p.id + ')">' +
+                   '<button class="btn-aksi btn-setujui" id="wali-setuju-' + p.id + '" onclick="setujuiPerubahan(' + p.id + ')">' +
                      '<i class="fa-solid fa-check"></i>Setujui</button>' +
-                   '<button class="btn-aksi btn-hapus" onclick="tolakPerubahan(' + p.id + ')">' +
+                   '<button class="btn-aksi btn-hapus" id="wali-tolak-' + p.id + '" onclick="tolakPerubahan(' + p.id + ')">' +
                      '<i class="fa-solid fa-xmark"></i>Tolak</button>' +
                  '</div></td>' +
                '</tr>';
@@ -10358,7 +10875,7 @@
 
     // Riwayat permohonan yang sudah diproses, disaring sesuai tab yang dibuka
     function htmlRiwayatPermohonan(tab) {
-      const daftar = _bacaArr('sip_permohonan_wali').filter(function(p) {
+      const daftar = _srv('permohonanWali', 'sip_permohonan_wali').filter(function(p) {
         return p && p.id !== undefined && String(p.status || '') === tab;
       });
 
@@ -10394,8 +10911,29 @@
 
     // Modul Approve Data Wali Murid milik KTU, mengembalikan HTML siap tampil
     function ktuApproveWaliMurid() {
+      const kepala = '<h1 class="module-title">Approve Perubahan Data Wali Murid</h1>' +
+        '<p class="module-sub">Setujui atau tolak perubahan data diri yang diajukan wali murid</p>';
+      if (MODE_API) return kepala + '<div id="isi-approve-wali" data-muat="approveWali"></div>';
       _pastikanPermohonanWali();
+      return _htmlIsiApproveWali();
+    }
 
+    PEMUAT.approveWali = function() {
+      return _muatModul('isi-approve-wali', [['getPermohonanWali'], ['getUsers']],
+        function(d) {
+          _srvIsi({ permohonanWali: d[0], users: d[1] });
+          return _htmlIsiApproveWali(true);
+        }, 'approveWali', 3);
+    };
+
+    function gantiTabRiwayatWali(nilai) {
+      tabRiwayatWali = nilai;
+      const wadah = document.getElementById('isi-approve-wali');
+      if (!wadah || !SRV.permohonanWali) { loadModule('Approve Data Wali Murid'); return; }
+      wadah.innerHTML = _htmlIsiApproveWali(true);
+    }
+
+    function _htmlIsiApproveWali(tanpaJudul) {
       const daftarTab = [
         { nilai: 'approved', teks: 'Disetujui', ikon: 'fa-circle-check' },
         { nilai: 'rejected', teks: 'Ditolak',   ikon: 'fa-circle-xmark' }
@@ -10404,12 +10942,12 @@
       const tab = daftarTab.map(function(t) {
         const aktif = (t.nilai === tabRiwayatWali) ? ' active' : '';
         return '<button class="tab-btn' + aktif + '" ' +
-               'onclick="tabRiwayatWali=\'' + t.nilai + '\';loadModule(\'Approve Data Wali Murid\')">' +
+               'onclick="gantiTabRiwayatWali(\'' + t.nilai + '\')">' +
                '<i class="fa-solid ' + t.ikon + '"></i> ' + t.teks + '</button>';
       }).join('');
 
-      return '<h1 class="module-title">Approve Perubahan Data Wali Murid</h1>' +
-             '<p class="module-sub">Setujui atau tolak perubahan data diri yang diajukan wali murid</p>' +
+      return (tanpaJudul ? '' : '<h1 class="module-title">Approve Perubahan Data Wali Murid</h1>' +
+             '<p class="module-sub">Setujui atau tolak perubahan data diri yang diajukan wali murid</p>') +
              htmlPermohonanPending() +
              '<div class="card">' +
                '<h2 class="section-title">Riwayat Permohonan</h2>' +
@@ -10499,7 +11037,13 @@
     }
 
     // Setujui perubahan: data akun wali murid ikut diperbarui
-    function setujuiPerubahan(id) {
+    async function setujuiPerubahan(id) {
+      if (MODE_API) {
+        await _kirimAksi('wali-setuju-' + id, 'prosesPermohonanWali',
+          { idPermohonan: id, status: 'approved' }, 'approveWali', 'Menyetujui');
+        return;
+      }
+
       const ambil = _permohonanPending(id);
       if (!ambil) return;
 
@@ -10544,7 +11088,14 @@
     }
 
     // Tolak perubahan: data akun wali murid dibiarkan seperti semula
-    function tolakPerubahan(id) {
+    async function tolakPerubahan(id) {
+      if (MODE_API) {
+        if (!confirm('Tolak permohonan ini?')) return;
+        await _kirimAksi('wali-tolak-' + id, 'prosesPermohonanWali',
+          { idPermohonan: id, status: 'rejected' }, 'approveWali', 'Menolak');
+        return;
+      }
+
       const ambil = _permohonanPending(id);
       if (!ambil) return;
 
@@ -10873,11 +11424,11 @@
     // Pengumuman khusus yang sudah disetujui Kepala Sekolah untuk satu anak.
     // Pengumuman pending atau ditolak sengaja tidak ikut terbawa.
     function htmlPesanWaliKelas(idSiswa) {
-      const anak = _bacaArr('sip_siswa').find(function(s) {
+      const anak = _srv('anak', 'sip_siswa').find(function(s) {
         return s && String(s.id) === String(idSiswa);
       });
 
-      const daftar = _bacaArr('sip_pengumuman').filter(function(p) {
+      const daftar = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && String(p.tipe || '') === 'khusus' &&
                String(p.status || '') === 'approved' &&
                idSiswa !== '' && String(p.id_penerima_siswa) === String(idSiswa);
@@ -10919,6 +11470,18 @@
 
     // Modul Pesan Wali Kelas milik Wali Murid, mengembalikan HTML siap tampil
     function waliMuridPesan() {
+      if (MODE_API) return '<div id="isi-wali-pesan" data-muat="waliPesan"></div>';
+      return _htmlIsiWaliPesan();
+    }
+
+    PEMUAT.waliPesan = function() {
+      return _muatModul('isi-wali-pesan', [['getBekalDataAnak'], ['getPengumuman']], function(d) {
+        _srvIsi({ anak: (d[0] && d[0].anak) || [], pengumuman: d[1] });
+        return _htmlIsiWaliPesan();
+      }, 'waliPesan', 4);
+    };
+
+    function _htmlIsiWaliPesan() {
       _pastikanPenyimpananAnak();
 
       const anak = _anakSaya();
@@ -11261,7 +11824,7 @@
 
     // Daftar pengumuman resmi yang boleh dibaca wali murid
     function htmlPengumumanWali() {
-      const daftar = _bacaArr('sip_pengumuman').filter(function(p) {
+      const daftar = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && String(p.tipe || '') === 'global' &&
                String(p.status || '') === 'approved' && bisaLihat(p.target);
       });
@@ -11280,7 +11843,9 @@
         return (Number(b.id) || 0) - (Number(a.id) || 0);
       });
 
-      const users = _bacaArr('sip_users');
+      // Wali murid tidak berhak membaca daftar akun; role pengirim sudah
+      // ikut tersimpan pada pengumumannya sendiri
+      const users = Array.isArray(SRV.pengumuman) ? [] : _bacaArr('sip_users');
 
       return daftar.map(function(p) {
         // Role pengirim dibaca dari pengumumannya, atau dicari lewat akunnya
@@ -11313,11 +11878,26 @@
 
     // Modul Pengumuman milik Wali Murid, mengembalikan HTML siap tampil
     function waliMuridPengumuman() {
-      _pastikanPenyimpananAnak();
-
+      if (MODE_API) {
+        return '<h1 class="module-title">Pengumuman Pesantren</h1>' +
+               '<p class="module-sub">Informasi dan pengumuman resmi dari pesantren</p>' +
+               '<div id="isi-wali-peng" data-muat="waliPengumuman"></div>';
+      }
       return '<h1 class="module-title">Pengumuman Pesantren</h1>' +
              '<p class="module-sub">Informasi dan pengumuman resmi dari pesantren</p>' +
-             htmlPengumumanWali();
+             _htmlIsiWaliPengumuman();
+    }
+
+    PEMUAT.waliPengumuman = function() {
+      return _muatModul('isi-wali-peng', [['getPengumuman']], function(d) {
+        _srvIsi({ pengumuman: d[0] });
+        return _htmlIsiWaliPengumuman();
+      }, 'waliPengumuman', 3);
+    };
+
+    function _htmlIsiWaliPengumuman() {
+      _pastikanPenyimpananAnak();
+      return htmlPengumumanWali();
     }
 
     // ================= MODUL PROFIL (WALI MURID) =================
@@ -11327,7 +11907,7 @@
       const sesi = getSession();
       if (!sesi) return '<p class="pesan-info">Belum ada riwayat perubahan data</p>';
 
-      const daftar = _bacaArr('sip_permohonan_wali').filter(function(p) {
+      const daftar = _srv('permohonanWali', 'sip_permohonan_wali').filter(function(p) {
         return p && p.id !== undefined && String(p.id_user) === String(sesi.id);
       });
 
@@ -11369,9 +11949,35 @@
     }
 
     // Modul Profil milik Wali Murid, mengembalikan HTML siap tampil
-    function waliMuridProfil() {
+    // Hanya wali murid yang boleh mengajukan perubahan data diri; peran lain
+    // memakai modul yang sama tetapi cukup bagian ganti PIN-nya.
+    function _peranWaliMurid() {
       const sesi = getSession();
-      const u = _bacaArr('sip_users').find(function(x) {
+      return !!sesi && String(sesi.role || '').toLowerCase() === 'walimurid';
+    }
+
+    function modulProfil() {
+      // Riwayat permohonan hanya perlu dijemput untuk wali murid
+      if (MODE_API && _peranWaliMurid()) {
+        return '<div id="isi-wali-profil" data-muat="waliProfil"></div>';
+      }
+      return _htmlIsiWaliProfil();
+    }
+
+    PEMUAT.waliProfil = function() {
+      return _muatModul('isi-wali-profil', [['getPermohonanWali']], function(d) {
+        _srvIsi({ permohonanWali: d[0] });
+        return _htmlIsiWaliProfil();
+      }, 'waliProfil', 3);
+    };
+
+    function _htmlIsiWaliProfil() {
+      const sesi = getSession();
+      const bolehAjukan = _peranWaliMurid();
+      // Server belum menyediakan aksi untuk membaca profil sendiri, jadi pada
+      // mode server kolom email/HP/alamat dibiarkan kosong daripada
+      // menampilkan catatan lama dari peramban
+      const u = MODE_API ? null : _bacaArr('sip_users').find(function(x) {
         return x && sesi && String(x.id) === String(sesi.id);
       });
 
@@ -11387,7 +11993,7 @@
 
       // --- Kartu kiri: data diri ---
       let isiKiri;
-      if (formEditProfil) {
+      if (formEditProfil && bolehAjukan) {
         isiKiri =
           '<span class="info-badge"><i class="fa-solid fa-circle-info"></i>' +
             'Perubahan data diri memerlukan persetujuan KTU</span>' +
@@ -11401,7 +12007,7 @@
           '<textarea id="profilAlamat" class="input input--rows" rows="2" ' +
             'placeholder="Kosongkan jika tidak ingin mengubah"></textarea>' +
           '<div class="filter-aksi">' +
-            '<button class="btn" onclick="ajukanPerubahanData()">' +
+            '<button class="btn" id="profil-ajukan" onclick="ajukanPerubahanData()">' +
               '<i class="fa-solid fa-paper-plane"></i> Ajukan Perubahan</button>' +
             '<button class="btn btn--abu" onclick="batalEdit()">' +
               '<i class="fa-solid fa-xmark"></i> Batal</button>' +
@@ -11414,8 +12020,15 @@
             item('No HP Saat Ini', isi(u ? u.no_hp : '')) +
             item('Alamat Saat Ini', isi(u ? u.alamat : ''), true) +
           '</div>' +
-          '<button class="btn btn--emas btn--full" onclick="tampilkanFormEdit()">' +
-            '<i class="fa-solid fa-edit"></i> Ubah Data Diri</button>';
+          (MODE_API
+            ? '<p class="pesan-info">Data saat ini belum bisa ditampilkan karena server ' +
+              'belum menyediakan aksi baca profil sendiri. Pengajuan perubahan tetap berjalan: ' +
+              'kolom yang Anda kosongkan akan dibiarkan seperti sekarang oleh server.</p>'
+            : '') +
+          (bolehAjukan
+            ? '<button class="btn btn--emas btn--full" onclick="tampilkanFormEdit()">' +
+                '<i class="fa-solid fa-edit"></i> Ubah Data Diri</button>'
+            : '<p class="pesan-info">Perubahan data diri akun staf diurus lewat KTU.</p>');
       }
 
       const kartuKiri =
@@ -11433,17 +12046,21 @@
           '<input type="password" id="pinBaru" class="input" maxlength="6" placeholder="••••••">' +
           '<label class="form-label" for="pinKonfirmasi">Konfirmasi PIN Baru</label>' +
           '<input type="password" id="pinKonfirmasi" class="input" maxlength="6" placeholder="••••••">' +
-          '<button class="btn btn--full" onclick="gantiPIN()">' +
+          '<button class="btn btn--full" id="pin-ganti" onclick="gantiPIN()">' +
             '<i class="fa-solid fa-lock"></i> Ganti PIN</button>' +
         '</div>';
+
+      const kartuRiwayat = bolehAjukan
+        ? '<div class="card">' +
+            '<h2 class="section-title">Riwayat Perubahan Data Diri</h2>' +
+            htmlRiwayatPermohonanSaya() +
+          '</div>'
+        : '';
 
       return '<h1 class="module-title">Profil &amp; Keamanan</h1>' +
              '<p class="module-sub">Kelola data diri dan keamanan akun</p>' +
              '<div class="grid-60-40">' + kartuKiri + kartuKanan + '</div>' +
-             '<div class="card">' +
-               '<h2 class="section-title">Riwayat Perubahan Data Diri</h2>' +
-               htmlRiwayatPermohonanSaya() +
-             '</div>';
+             kartuRiwayat;
     }
 
     // Buka formulir ubah data diri
@@ -11459,15 +12076,15 @@
     }
 
     // Kirim permohonan perubahan data ke KTU. Data akun sengaja belum diubah.
-    function ajukanPerubahanData() {
+    async function ajukanPerubahanData() {
       const sesi = getSession();
       const elEmail = document.getElementById('profilEmail');
       const elHp = document.getElementById('profilHp');
       const elAlamat = document.getElementById('profilAlamat');
       if (!sesi || !elEmail || !elHp || !elAlamat) return;
 
-      const users = _bacaArr('sip_users');
-      const u = users.find(function(x) { return x && String(x.id) === String(sesi.id); });
+      const users = MODE_API ? [] : _bacaArr('sip_users');
+      const u = MODE_API ? {} : users.find(function(x) { return x && String(x.id) === String(sesi.id); });
       if (!u) {
         showNotif('Akun tidak ditemukan', 'error');
         return;
@@ -11483,6 +12100,15 @@
       }
       if (emailBaru !== '' && !validasiEmail(emailBaru)) {
         showNotif('Format email tidak valid', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        // Server yang membandingkan dengan data lama dan menolak bila tak berubah
+        await _kirimAksi('profil-ajukan', 'ajukanPerubahanWali', { data: {
+          email_baru: emailBaru, no_hp_baru: hpBaru, alamat_baru: alamatBaru
+        } }, 'waliProfil', 'Mengirim');
+        formEditProfil = false;
         return;
       }
 
@@ -11532,7 +12158,7 @@
     }
 
     // Ganti PIN akun sendiri. Session tidak diutak-atik sehingga tetap masuk.
-    function gantiPIN() {
+    async function gantiPIN() {
       const sesi = getSession();
       const elLama = document.getElementById('pinLama');
       const elBaru = document.getElementById('pinBaru');
@@ -11556,16 +12182,6 @@
         return;
       }
 
-      const users = _bacaArr('sip_users');
-      const i = users.findIndex(function(x) { return x && String(x.id) === String(sesi.id); });
-      if (i === -1) {
-        showNotif('Akun tidak ditemukan', 'error');
-        return;
-      }
-      if (String(users[i].pin || '') !== lama) {
-        showNotif('PIN lama tidak sesuai', 'error');
-        return;
-      }
       if (!/^\d{6}$/.test(baru)) {
         showNotif('PIN baru harus 6 digit angka', 'error');
         return;
@@ -11576,6 +12192,25 @@
       }
       if (baru === lama) {
         showNotif('PIN baru tidak boleh sama dengan PIN lama', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        // Kecocokan PIN lama diperiksa server
+        const ok = await _kirimAksi('pin-ganti', 'gantiPin',
+          { pinLama: lama, pinBaru: baru }, null, 'Mengganti');
+        if (ok) { elLama.value = ''; elBaru.value = ''; elKonfirmasi.value = ''; }
+        return;
+      }
+
+      const users = _bacaArr('sip_users');
+      const i = users.findIndex(function(x) { return x && String(x.id) === String(sesi.id); });
+      if (i === -1) {
+        showNotif('Akun tidak ditemukan', 'error');
+        return;
+      }
+      if (String(users[i].pin || '') !== lama) {
+        showNotif('PIN lama tidak sesuai', 'error');
         return;
       }
 
@@ -11594,7 +12229,7 @@
 
     // Pengumuman tagihan dari Bendahara yang menunggu giliran KTU
     function _tagihanMenungguKtu() {
-      return _bacaArr('sip_pengumuman').filter(function(p) {
+      return _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && p.id !== undefined && String(p.tipe || '') === 'tagihan' &&
                String(p.status || '') === 'pending_KTU';
       });
@@ -11603,7 +12238,7 @@
     // Pembayaran siswa yang menunggu giliran KTU. Ditandai oleh id_siswa,
     // karena transaksi dari Manajemen Kas tidak memilikinya.
     function _pembayaranMenungguKtu() {
-      return _bacaArr('sip_transaksi').filter(function(t) {
+      return _srv('transaksi', 'sip_transaksi').filter(function(t) {
         return t && t.id !== undefined && String(t.status_approval || '') === 'pending_KTU' &&
                t.id_siswa !== undefined && t.id_siswa !== null && t.id_siswa !== '';
       });
@@ -11611,7 +12246,7 @@
 
     // Transaksi yang menunggu giliran Kepala Sekolah, dipisah menurut asalnya
     function _keuanganMenungguKepsek(dariPembayaran) {
-      return _bacaArr('sip_transaksi').filter(function(t) {
+      return _srv('transaksi', 'sip_transaksi').filter(function(t) {
         if (!t || t.id === undefined) return false;
         if (String(t.status_approval || '') !== 'pending_Kepsek') return false;
         const punyaSiswa = (t.id_siswa !== undefined && t.id_siswa !== null && t.id_siswa !== '');
@@ -11621,7 +12256,7 @@
 
     // Rincian antrean keuangan milik Kepala Sekolah
     function _rincianKeuanganKepsek() {
-      const tagihan = _bacaArr('sip_pengumuman').filter(function(p) {
+      const tagihan = _srv('pengumuman', 'sip_pengumuman').filter(function(p) {
         return p && String(p.tipe || '') === 'tagihan' && String(p.status || '') === 'pending_Kepsek';
       }).length;
       const pembayaran = _keuanganMenungguKepsek(true).length;
@@ -11647,10 +12282,10 @@
 
     // Rangkum satu transaksi pembayaran menjadi nama siswa dan nama biayanya
     function _rincianPembayaran(t) {
-      const siswa = _bacaArr('sip_siswa').find(function(s) {
+      const siswa = _srv('siswa', 'sip_siswa').find(function(s) {
         return s && String(s.id) === String(t.id_siswa);
       });
-      const biaya = _bacaArr('sip_biaya').find(function(b) {
+      const biaya = _srv('biaya', 'sip_biaya').find(function(b) {
         return b && String(b.id) === String(t.id_biaya);
       });
       return {
@@ -11661,10 +12296,12 @@
 
     // Dua tombol keputusan pada kolom Aksi
     function _tombolApproval(fnSetuju, fnTolak, id) {
+      // id tombol dibentuk dari nama fungsinya supaya _kirimAksi bisa
+      // membuat tombol yang tepat menjadi sibuk saat dikirim ke server
       return '<td><div class="aksi-grup">' +
-               '<button class="btn-aksi btn-setujui" onclick="' + fnSetuju + '(' + id + ')">' +
+               '<button class="btn-aksi btn-setujui" id="' + fnSetuju + '-' + id + '" onclick="' + fnSetuju + '(' + id + ')">' +
                  '<i class="fa-solid fa-check"></i>Setujui</button>' +
-               '<button class="btn-aksi btn-hapus" onclick="' + fnTolak + '(' + id + ')">' +
+               '<button class="btn-aksi btn-hapus" id="' + fnTolak + '-' + id + '" onclick="' + fnTolak + '(' + id + ')">' +
                  '<i class="fa-solid fa-xmark"></i>Tolak</button>' +
              '</div></td>';
     }
@@ -11736,6 +12373,29 @@
 
     // Modul Approval Tagihan & Pembayaran milik KTU
     function ktuApprovalTagihanPembayaran() {
+      const kepala = '<h1 class="module-title">Approval Tagihan &amp; Pembayaran</h1>' +
+        '<p class="module-sub">Setujui pengumuman tagihan dan pembayaran dari Bendahara</p>';
+      if (MODE_API) return kepala + '<div id="isi-approval-tagihan" data-muat="approvalTagihan"></div>';
+      return _htmlIsiApprovalTagihan();
+    }
+
+    PEMUAT.approvalTagihan = function() {
+      return _muatModul('isi-approval-tagihan',
+        [['getPengumuman'], ['getTransaksi'], ['getSiswa'], ['getBiaya']],
+        function(d) {
+          _srvIsi({ pengumuman: d[0], transaksi: d[1], siswa: d[2], biaya: d[3] });
+          return _htmlIsiApprovalTagihan(true);
+        }, 'approvalTagihan', 3);
+    };
+
+    function gantiTabApprovalKtu(nilai) {
+      tabApprovalKtu = nilai;
+      const wadah = document.getElementById('isi-approval-tagihan');
+      if (!wadah || !SRV.pengumuman) { loadModule('Approval Tagihan'); return; }
+      wadah.innerHTML = _htmlIsiApprovalTagihan(true);
+    }
+
+    function _htmlIsiApprovalTagihan(tanpaJudul) {
       const daftarTab = [
         { nilai: 'tagihan',    teks: 'Pengumuman Tagihan',  ikon: 'fa-bullhorn', jumlah: _tagihanMenungguKtu().length },
         { nilai: 'pembayaran', teks: 'Pembayaran Pending',  ikon: 'fa-cash-register', jumlah: _pembayaranMenungguKtu().length }
@@ -11744,7 +12404,7 @@
       const tab = daftarTab.map(function(t) {
         const aktif = (t.nilai === tabApprovalKtu) ? ' active' : '';
         return '<button class="tab-btn' + aktif + '" ' +
-               'onclick="tabApprovalKtu=\'' + t.nilai + '\';loadModule(\'Approval Tagihan\')">' +
+               'onclick="gantiTabApprovalKtu(\'' + t.nilai + '\')">' +
                '<i class="fa-solid ' + t.ikon + '"></i> ' + t.teks + ' (' + t.jumlah + ')</button>';
       }).join('');
 
@@ -11752,8 +12412,8 @@
       const isi = pembayaran ? htmlApprovalPembayaran() : htmlApprovalTagihan();
       const judulIsi = pembayaran ? 'Pembayaran Menunggu Persetujuan' : 'Pengumuman Tagihan Menunggu Persetujuan';
 
-      return '<h1 class="module-title">Approval Tagihan &amp; Pembayaran</h1>' +
-             '<p class="module-sub">Setujui pengumuman tagihan dan pembayaran dari Bendahara</p>' +
+      return (tanpaJudul ? '' : '<h1 class="module-title">Approval Tagihan &amp; Pembayaran</h1>' +
+             '<p class="module-sub">Setujui pengumuman tagihan dan pembayaran dari Bendahara</p>') +
              '<span class="info-badge"><i class="fa-solid fa-circle-info"></i>' +
                'Setelah Anda setujui, kiriman diteruskan ke Kepala Sekolah untuk persetujuan akhir</span>' +
              '<div class="tab-bar">' + tab + '</div>' +
@@ -11762,7 +12422,7 @@
 
     // Ambil satu pengumuman tagihan yang masih menunggu KTU
     function _ambilTagihanKtu(id) {
-      const daftar = _bacaArr('sip_pengumuman');
+      const daftar = _srv('pengumuman', 'sip_pengumuman');
       const i = daftar.findIndex(function(p) { return p && String(p.id) === String(id); });
       if (i === -1) {
         showNotif('Pengumuman tidak ditemukan', 'error');
@@ -11776,7 +12436,13 @@
     }
 
     // Teruskan pengumuman tagihan ke Kepala Sekolah
-    function setujuiPengumumanTagihan(id) {
+    async function setujuiPengumumanTagihan(id) {
+      if (MODE_API) {
+        await _kirimAksi('setujuiPengumumanTagihan-' + id, 'approvePengumumanTagihanKTU',
+          { pengumumanId: id }, 'approvalTagihan', 'Menyetujui');
+        return;
+      }
+
       const ambil = _ambilTagihanKtu(id);
       if (!ambil) return;
 
@@ -11789,7 +12455,13 @@
     }
 
     // Tolak pengumuman tagihan, tidak diteruskan ke siapa pun
-    function tolakPengumumanTagihan(id) {
+    async function tolakPengumumanTagihan(id) {
+      if (MODE_API) {
+        // Backend belum menyediakan penolakan tagihan di tahap KTU
+        showNotif('Penolakan tagihan di tahap KTU belum tersedia di server', 'error');
+        return;
+      }
+
       const ambil = _ambilTagihanKtu(id);
       if (!ambil) return;
 
@@ -11805,7 +12477,7 @@
 
     // Ambil satu transaksi yang statusnya masih sesuai harapan
     function _ambilTransaksi(id, statusDiharapkan) {
-      const daftar = _bacaArr('sip_transaksi');
+      const daftar = _srv('transaksi', 'sip_transaksi');
       const i = daftar.findIndex(function(t) { return t && String(t.id) === String(id); });
       if (i === -1) {
         showNotif('Transaksi tidak ditemukan', 'error');
@@ -11819,7 +12491,13 @@
     }
 
     // Teruskan pembayaran ke Kepala Sekolah. Tagihan belum dilunasi di sini.
-    function setujuiPembayaranKtu(id) {
+    async function setujuiPembayaranKtu(id) {
+      if (MODE_API) {
+        await _kirimAksi('setujuiPembayaranKtu-' + id, 'approvePembayaranKTU',
+          { transaksiId: id, status: 'approved' }, 'approvalTagihan', 'Menyetujui');
+        return;
+      }
+
       const ambil = _ambilTransaksi(id, 'pending_KTU');
       if (!ambil) return;
 
@@ -11832,7 +12510,14 @@
     }
 
     // Tolak pembayaran, tagihan tetap berstatus belum lunas
-    function tolakPembayaranKtu(id) {
+    async function tolakPembayaranKtu(id) {
+      if (MODE_API) {
+        if (!confirm('Tolak pembayaran ini?')) return;
+        await _kirimAksi('tolakPembayaranKtu-' + id, 'approvePembayaranKTU',
+          { transaksiId: id, status: 'rejected' }, 'approvalTagihan', 'Menolak');
+        return;
+      }
+
       const ambil = _ambilTransaksi(id, 'pending_KTU');
       if (!ambil) return;
 
@@ -11893,6 +12578,29 @@
 
     // Modul Approve Keuangan milik Kepala Sekolah
     function kepsekApproveKeuangan() {
+      const kepala = '<h1 class="module-title">Approve Keuangan</h1>' +
+        '<p class="module-sub">Persetujuan akhir pengeluaran kas dan pembayaran siswa</p>';
+      if (MODE_API) return kepala + '<div id="isi-approve-keu" data-muat="approveKeuangan"></div>';
+      return _htmlIsiApproveKeuangan();
+    }
+
+    PEMUAT.approveKeuangan = function() {
+      return _muatModul('isi-approve-keu',
+        [['getTransaksi', { filter: { status_approval: 'pending_Kepsek' } }], ['getSiswa'], ['getBiaya']],
+        function(d) {
+          _srvIsi({ transaksi: d[0], siswa: d[1], biaya: d[2] });
+          return _htmlIsiApproveKeuangan(true);
+        }, 'approveKeuangan', 3);
+    };
+
+    function gantiTabApprovalKepsek(nilai) {
+      tabApprovalKepsek = nilai;
+      const wadah = document.getElementById('isi-approve-keu');
+      if (!wadah || !SRV.transaksi) { loadModule('Approve Keuangan'); return; }
+      wadah.innerHTML = _htmlIsiApproveKeuangan(true);
+    }
+
+    function _htmlIsiApproveKeuangan(tanpaJudul) {
       const daftarTab = [
         { nilai: 'pengeluaran', teks: 'Pengeluaran Pending', ikon: 'fa-money-bill-transfer',
           jumlah: _keuanganMenungguKepsek(false).length },
@@ -11903,7 +12611,7 @@
       const tab = daftarTab.map(function(t) {
         const aktif = (t.nilai === tabApprovalKepsek) ? ' active' : '';
         return '<button class="tab-btn' + aktif + '" ' +
-               'onclick="tabApprovalKepsek=\'' + t.nilai + '\';loadModule(\'Approve Keuangan\')">' +
+               'onclick="gantiTabApprovalKepsek(\'' + t.nilai + '\')">' +
                '<i class="fa-solid ' + t.ikon + '"></i> ' + t.teks + ' (' + t.jumlah + ')</button>';
       }).join('');
 
@@ -11911,8 +12619,8 @@
       const judulIsi = pembayaran ? 'Pembayaran Menunggu Persetujuan Akhir'
                                   : 'Pengeluaran Menunggu Persetujuan';
 
-      return '<h1 class="module-title">Approve Keuangan</h1>' +
-             '<p class="module-sub">Persetujuan akhir pengeluaran kas dan pembayaran siswa</p>' +
+      return (tanpaJudul ? '' : '<h1 class="module-title">Approve Keuangan</h1>' +
+             '<p class="module-sub">Persetujuan akhir pengeluaran kas dan pembayaran siswa</p>') +
              '<span class="info-badge"><i class="fa-solid fa-circle-info"></i>' +
                'Pembayaran yang Anda setujui akan langsung melunasi tagihan siswa terkait</span>' +
              '<div class="tab-bar">' + tab + '</div>' +
@@ -11949,7 +12657,13 @@
     }
 
     // Persetujuan akhir. Bila transaksinya pembayaran, tagihannya ikut dilunasi.
-    function setujuiKeuangan(id) {
+    async function setujuiKeuangan(id) {
+      if (MODE_API) {
+        await _kirimAksi('setujuiKeuangan-' + id, 'approveTransaksi',
+          { transaksiId: id, status: 'approved' }, 'approveKeuangan', 'Menyetujui');
+        return;
+      }
+
       const ambil = _ambilTransaksi(id, 'pending_Kepsek');
       if (!ambil) return;
 
@@ -11972,7 +12686,14 @@
     }
 
     // Tolak transaksi. Tagihan siswa tidak diubah sama sekali.
-    function tolakKeuangan(id) {
+    async function tolakKeuangan(id) {
+      if (MODE_API) {
+        if (!confirm('Tolak transaksi ini?')) return;
+        await _kirimAksi('tolakKeuangan-' + id, 'approveTransaksi',
+          { transaksiId: id, status: 'rejected' }, 'approveKeuangan', 'Menolak');
+        return;
+      }
+
       const ambil = _ambilTransaksi(id, 'pending_Kepsek');
       if (!ambil) return;
 
@@ -12153,6 +12874,9 @@
     // Pembaca 'sip_konfigurasi'. Isinya objek, bukan array, jadi tidak
     // bisa memakai _bacaArr(). Selalu mengembalikan objek.
     function _bacaKonfigurasi() {
+      // getKonfigurasi mengembalikan objek kunci-nilai, bukan array,
+      // jadi titipannya disimpan sendiri di luar _srvIsi()
+      if (SRV.konfigurasi && typeof SRV.konfigurasi === 'object') return SRV.konfigurasi;
       try {
         const isi = JSON.parse(localStorage.getItem('sip_konfigurasi'));
         return (isi && typeof isi === 'object' && !Array.isArray(isi)) ? isi : {};
@@ -12176,6 +12900,19 @@
 
     // Modul Konfigurasi Umum milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekKonfigurasi() {
+      if (MODE_API) return '<div id="isi-konfigurasi" data-muat="konfigurasi"></div>';
+      return _htmlIsiKonfigurasi();
+    }
+
+    PEMUAT.konfigurasi = function() {
+      return _muatModul('isi-konfigurasi', [['getKonfigurasi'], ['getTahunAjaran']], function(d) {
+        SRV.konfigurasi = (d[0] && typeof d[0] === 'object') ? d[0] : {};
+        _srvIsi({ tahunAjaran: d[1] });
+        return _htmlIsiKonfigurasi();
+      }, 'konfigurasi', 4);
+    };
+
+    function _htmlIsiKonfigurasi() {
       const tahunAjaran = _pastikanTahunAjaran();
       const konf = _bacaKonfigurasi();
 
@@ -12195,7 +12932,7 @@
             'Tahun ajaran aktif digunakan di seluruh sistem</span>' +
           '<label class="form-label" for="konfTahun">Pilih Tahun Ajaran Aktif</label>' +
           '<select id="konfTahun" class="input">' + opsiTahun + '</select>' +
-          '<button class="btn" onclick="simpanTahunAjaranAktif()">' +
+          '<button class="btn" id="konf-tahun" onclick="simpanTahunAjaranAktif()">' +
             '<i class="fa-solid fa-check"></i> Simpan</button>' +
         '</div>';
 
@@ -12208,7 +12945,7 @@
             'value="' + _thresholdBerlaku() + '">' +
           '<p class="ket-export">Pengeluaran di atas jumlah ini memerlukan ' +
             'persetujuan Kepala Sekolah</p>' +
-          '<button class="btn" onclick="simpanThreshold()">' +
+          '<button class="btn" id="konf-threshold" onclick="simpanThreshold()">' +
             '<i class="fa-solid fa-check"></i> Simpan</button>' +
         '</div>';
 
@@ -12231,26 +12968,34 @@
           '<span class="info-badge"><i class="fa-solid fa-circle-info"></i>' +
             'Logo akan muncul di halaman login dan sidebar</span>' +
           '<div class="filter-aksi">' +
-            '<button class="btn" onclick="simpanLogo()">' +
+            '<button class="btn" id="konf-logo" onclick="simpanLogo()">' +
               '<i class="fa-solid fa-check"></i> Simpan</button>' +
-            '<button class="btn btn--abu" onclick="resetLogo()">' +
+            '<button class="btn btn--abu" id="konf-logo-reset" onclick="resetLogo()">' +
               '<i class="fa-solid fa-rotate-left"></i> Reset ke Default</button>' +
           '</div>' +
         '</div>';
 
       // --- BAGIAN 4: reset seluruh data ---
+      // resetAplikasi() hanya membersihkan penyimpanan peramban. Pada mode
+      // server, data yang sesungguhnya ada di Google Sheet dan tidak ikut
+      // terhapus, jadi keterangannya jangan sampai menjanjikan lebih.
       const kartuReset =
         '<div class="card card--bahaya">' +
           '<h2 class="section-title">Reset Data Aplikasi</h2>' +
           '<p class="teks-bahaya"><i class="fa-solid fa-triangle-exclamation"></i> ' +
-            'Fitur ini akan menghapus SEMUA data dan mengembalikan ke pengaturan awal.</p>' +
+            (MODE_API
+              ? 'Menghapus data contoh yang tersimpan di peramban ini saja. ' +
+                'Data di server TIDAK ikut terhapus. Anda akan keluar dari aplikasi.'
+              : 'Fitur ini akan menghapus SEMUA data dan mengembalikan ke pengaturan awal.') +
+          '</p>' +
           '<label class="form-label" for="konfirmasiReset">' +
             'Ketik <strong>' + KALIMAT_KONFIRMASI_RESET + '</strong> untuk membuka tombol</label>' +
           '<input type="text" id="konfirmasiReset" class="input" ' +
             'placeholder="' + KALIMAT_KONFIRMASI_RESET + '" oninput="cekKonfirmasiReset()">' +
           '<button class="btn btn--merah btn--full" id="tombolReset" disabled ' +
             'onclick="resetAplikasi()">' +
-            '<i class="fa-solid fa-trash"></i> Reset Semua Data</button>' +
+            '<i class="fa-solid fa-trash"></i> ' +
+            (MODE_API ? 'Reset Data Peramban' : 'Reset Semua Data') + '</button>' +
         '</div>';
 
       return '<h1 class="module-title">Konfigurasi Umum</h1>' +
@@ -12259,12 +13004,18 @@
     }
 
     // Tetapkan satu tahun ajaran sebagai yang aktif. Sisanya dimatikan.
-    function simpanTahunAjaranAktif() {
+    async function simpanTahunAjaranAktif() {
       const el = document.getElementById('konfTahun');
       if (!el) return;
 
       if (!el.value) {
         showNotif('Tahun ajaran wajib dipilih', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('konf-tahun', 'setTahunAjaranAktif',
+          { idTahun: el.value }, 'konfigurasi', 'Menyimpan');
         return;
       }
 
@@ -12284,13 +13035,19 @@
     }
 
     // Simpan batas nominal pengeluaran yang butuh persetujuan Kepala Sekolah
-    function simpanThreshold() {
+    async function simpanThreshold() {
       const el = document.getElementById('konfThreshold');
       if (!el) return;
 
       const nilai = Number(el.value);
       if (!nilai || nilai <= 0) {
         showNotif('Batas pengeluaran harus lebih dari 0', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('konf-threshold', 'simpanKonfigurasi',
+          { kunci: 'threshold_keuangan', nilai: nilai }, 'konfigurasi', 'Menyimpan');
         return;
       }
 
@@ -12301,7 +13058,7 @@
     }
 
     // Simpan alamat logo baru
-    function simpanLogo() {
+    async function simpanLogo() {
       const el = document.getElementById('konfLogo');
       if (!el) return;
 
@@ -12315,6 +13072,12 @@
         return;
       }
 
+      if (MODE_API) {
+        await _kirimAksi('konf-logo', 'simpanKonfigurasi',
+          { kunci: 'logo_url', nilai: url }, 'konfigurasi', 'Menyimpan');
+        return;
+      }
+
       _simpanKonfigurasi('logo_url', url);
 
       loadModule('Konfigurasi');
@@ -12322,7 +13085,13 @@
     }
 
     // Kembalikan logo ke bawaan aplikasi
-    function resetLogo() {
+    async function resetLogo() {
+      if (MODE_API) {
+        await _kirimAksi('konf-logo-reset', 'simpanKonfigurasi',
+          { kunci: 'logo_url', nilai: '' }, 'konfigurasi', 'Mengembalikan');
+        return;
+      }
+
       _simpanKonfigurasi('logo_url', '');
 
       loadModule('Konfigurasi');
@@ -12420,6 +13189,26 @@
 
     // Modul Dashboard milik Guru, mengembalikan HTML siap tampil
     function guruDashboard() {
+      if (MODE_API) return '<div id="isi-guru-dash" data-muat="guruDashboard"></div>';
+      return _htmlIsiGuruDashboard();
+    }
+
+    PEMUAT.guruDashboard = function() {
+      return _muatModul('isi-guru-dash',
+        [['getJadwalHariIni'], ['getBekalInputNilai'], ['getRPP'], ['getAbsensiGuru']],
+        function(d) {
+          // getJadwalHariIni sudah disaring server: hari ini, guru yang masuk
+          _srvIsi({
+            jadwal: (d[0] && d[0].jadwal) || [],
+            mapel: (d[1] && d[1].mapel) || [], kelas: (d[1] && d[1].kelas) || [],
+            siswa: (d[1] && d[1].siswa) || [], nilai: (d[1] && d[1].nilai) || [],
+            rpp: d[2], absensi: d[3]
+          });
+          return _htmlIsiGuruDashboard();
+        }, 'guruDashboard', 4);
+    };
+
+    function _htmlIsiGuruDashboard() {
       _pastikanPenyimpananGuru();
 
       const sesi = getSession();
@@ -12427,7 +13216,7 @@
       const namaHari = _namaHari(hariIni);
 
       // --- Jadwal mengajar hari ini ---
-      const jadwalSaya = _bacaArr('sip_jadwal').filter(function(j) {
+      const jadwalSaya = _srv('jadwal', 'sip_jadwal').filter(function(j) {
         return j && j.id !== undefined && sesi &&
                String(j.id_guru) === String(sesi.id) && String(j.hari || '') === namaHari;
       });
@@ -12435,8 +13224,8 @@
         return String(a.jam_mulai || '').localeCompare(String(b.jam_mulai || ''));
       });
 
-      const mapel = _bacaArr('sip_mapel');
-      const kelas = _bacaArr('sip_kelas');
+      const mapel = _srv('mapel', 'sip_mapel');
+      const kelas = _srv('kelas', 'sip_kelas');
 
       let isiJadwal;
       if (jadwalSaya.length === 0) {
@@ -12463,25 +13252,29 @@
       // --- Tiga angka ringkasan ---
       const tglHariIni = _ymd(hariIni);
 
-      const rppHariIni = _bacaArr('sip_rpp').filter(function(r) {
+      const rppHariIni = _srv('rpp', 'sip_rpp').filter(function(r) {
         return r && sesi && String(r.id_guru) === String(sesi.id) && _ymd(r.tgl) === tglHariIni;
       }).length;
 
       // Siswa yang diajar dihitung dari seluruh kelas yang ada di jadwal guru ini
       const kelasDiajar = {};
-      _bacaArr('sip_jadwal').forEach(function(j) {
+      _srv('jadwal', 'sip_jadwal').forEach(function(j) {
         if (j && sesi && String(j.id_guru) === String(sesi.id) && j.id_kelas !== undefined) {
           kelasDiajar[String(j.id_kelas)] = true;
         }
       });
-      const siswaDiajar = _bacaArr('sip_siswa').filter(function(s) {
+      const siswaDiajar = _srv('siswa', 'sip_siswa').filter(function(s) {
         return s && s.id_kelas !== undefined && s.id_kelas !== null &&
                kelasDiajar[String(s.id_kelas)] === true;
       }).length;
 
-      const nilaiDiberikan = _bacaArr('sip_nilai').filter(function(n) {
-        return n && sesi && String(n.id_guru) === String(sesi.id);
-      }).length;
+      // Nilai dari server sudah dibatasi pada mapel guru ini,
+      // jadi penyaringan id_guru hanya perlu di jalur localStorage
+      const nilaiDiberikan = Array.isArray(SRV.nilai)
+        ? SRV.nilai.length
+        : _bacaArr('sip_nilai').filter(function(n) {
+            return n && sesi && String(n.id_guru) === String(sesi.id);
+          }).length;
 
       const kartu = [
         { angka: rppHariIni,     label: 'RPP Hari Ini',      ikon: 'fa-book-open',     warna: 'hijau',  ikonWarna: 'hijau',  tujuan: 'RPP' },
@@ -12523,7 +13316,7 @@
     function _absensiHari(tanggal) {
       const sesi = getSession();
       if (!sesi) return null;
-      return _bacaArr('sip_absensi').find(function(a) {
+      return _srv('absensi', 'sip_absensi').find(function(a) {
         return a && a.id_guru !== undefined &&
                String(a.id_guru) === String(sesi.id) && _ymd(a.tgl) === tanggal;
       }) || null;
@@ -12536,7 +13329,7 @@
       batas.setHours(0, 0, 0, 0);
       batas.setDate(batas.getDate() - 6);
 
-      const daftar = _bacaArr('sip_absensi').filter(function(a) {
+      const daftar = _srv('absensi', 'sip_absensi').filter(function(a) {
         if (!a || a.id_guru === undefined || !sesi) return false;
         if (String(a.id_guru) !== String(sesi.id)) return false;
         const t = new Date(a.tgl);
@@ -12571,6 +13364,18 @@
 
     // Modul Absensi Mengajar milik Guru, mengembalikan HTML siap tampil
     function guruAbsensi() {
+      if (MODE_API) return '<div id="isi-guru-absen" data-muat="guruAbsensi"></div>';
+      return _htmlIsiGuruAbsensi();
+    }
+
+    PEMUAT.guruAbsensi = function() {
+      return _muatModul('isi-guru-absen', [['getAbsensiGuru']], function(d) {
+        _srvIsi({ absensi: d[0] });
+        return _htmlIsiGuruAbsensi();
+      }, 'guruAbsensi', 4);
+    };
+
+    function _htmlIsiGuruAbsensi() {
       _pastikanPenyimpananGuru();
 
       const hariIni = _ymd(new Date());
@@ -12595,9 +13400,9 @@
             item('Jam Keluar', sudahKeluar ? catatan.jam_keluar : '--:--') +
           '</div>' +
           '<div class="filter-aksi">' +
-            '<button class="btn" onclick="checkInGuru()"' + (sudahMasuk ? ' disabled' : '') + '>' +
+            '<button class="btn" id="absen-masuk" onclick="checkInGuru()"' + (sudahMasuk ? ' disabled' : '') + '>' +
               '<i class="fa-solid fa-right-to-bracket"></i> Check-in</button>' +
-            '<button class="btn btn--emas" onclick="checkOutGuru()"' +
+            '<button class="btn btn--emas" id="absen-keluar" onclick="checkOutGuru()"' +
               ((!sudahMasuk || sudahKeluar) ? ' disabled' : '') + '>' +
               '<i class="fa-solid fa-right-from-bracket"></i> Check-out</button>' +
           '</div>' +
@@ -12613,13 +13418,19 @@
     }
 
     // Catat jam masuk hari ini
-    function checkInGuru() {
+    async function checkInGuru() {
       const sesi = getSession();
       if (!sesi) return;
 
       const hariIni = _ymd(new Date());
       if (_absensiHari(hariIni)) {
         showNotif('Anda sudah check-in hari ini', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('absen-masuk', 'absenGuru',
+          { idGuru: sesi.id, jenis: 'checkin' }, 'guruAbsensi', 'Mencatat');
         return;
       }
 
@@ -12645,7 +13456,7 @@
     }
 
     // Catat jam keluar pada catatan hari ini
-    function checkOutGuru() {
+    async function checkOutGuru() {
       const hariIni = _ymd(new Date());
       const catatan = _absensiHari(hariIni);
 
@@ -12655,6 +13466,13 @@
       }
       if (catatan.jam_keluar) {
         showNotif('Anda sudah check-out hari ini', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        const sesi = getSession();
+        await _kirimAksi('absen-keluar', 'absenGuru',
+          { idGuru: sesi ? sesi.id : '', jenis: 'checkout' }, 'guruAbsensi', 'Mencatat');
         return;
       }
 
@@ -12678,7 +13496,7 @@
     // Riwayat RPP milik guru yang sedang masuk
     function htmlRiwayatRPP() {
       const sesi = getSession();
-      const daftar = _bacaArr('sip_rpp').filter(function(r) {
+      const daftar = _srv('rpp', 'sip_rpp').filter(function(r) {
         return r && r.id !== undefined && sesi && String(r.id_guru) === String(sesi.id);
       });
 
@@ -12693,8 +13511,8 @@
         return (Number(b.id) || 0) - (Number(a.id) || 0);
       });
 
-      const mapel = _bacaArr('sip_mapel');
-      const kelas = _bacaArr('sip_kelas');
+      const mapel = _srv('mapel', 'sip_mapel');
+      const kelas = _srv('kelas', 'sip_kelas');
 
       const baris = daftar.map(function(r, urut) {
         return '<tr>' +
@@ -12717,10 +13535,22 @@
 
     // Modul RPP milik Guru, mengembalikan HTML siap tampil
     function guruRPP() {
+      if (MODE_API) return '<div id="isi-guru-rpp" data-muat="guruRPP"></div>';
+      return _htmlIsiGuruRPP();
+    }
+
+    PEMUAT.guruRPP = function() {
+      return _muatModul('isi-guru-rpp', [['getRPP'], ['getBekalInputNilai']], function(d) {
+        _srvIsi({ rpp: d[0], mapel: (d[1] && d[1].mapel) || [], kelas: (d[1] && d[1].kelas) || [] });
+        return _htmlIsiGuruRPP();
+      }, 'guruRPP', 4);
+    };
+
+    function _htmlIsiGuruRPP() {
       _pastikanPenyimpananGuru();
 
-      const mapel = _bacaArr('sip_mapel').filter(function(m) { return m && m.id !== undefined; });
-      const kelas = _bacaArr('sip_kelas').filter(function(k) { return k && k.id !== undefined; });
+      const mapel = _srv('mapel', 'sip_mapel').filter(function(m) { return m && m.id !== undefined; });
+      const kelas = _srv('kelas', 'sip_kelas').filter(function(k) { return k && k.id !== undefined; });
 
       const form =
         '<div class="card card--hijau">' +
@@ -12759,7 +13589,7 @@
                 'placeholder="Uraian materi yang akan diajarkan"></textarea>' +
             '</div>' +
           '</div>' +
-          '<button class="btn btn--full" onclick="simpanRPP()">' +
+          '<button class="btn btn--full" id="rpp-simpan" onclick="simpanRPP()">' +
             '<i class="fa-solid fa-save"></i> Simpan RPP</button>' +
         '</div>';
 
@@ -12782,7 +13612,7 @@
     }
 
     // Simpan satu RPP. Untuk demo, lampiran hanya dicatat nama berkasnya.
-    function simpanRPP() {
+    async function simpanRPP() {
       const sesi = getSession();
       const elMapel = document.getElementById('rppMapel');
       const elKelas = document.getElementById('rppKelas');
@@ -12818,6 +13648,15 @@
       const media = elMedia.value.trim();
       if (!media) {
         showNotif('Media tidak boleh kosong', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('rpp-simpan', 'simpanRPP', { data: {
+          id_mapel: elMapel.value, id_kelas: elKelas.value, tgl: elTanggal.value,
+          materi: materi, metode: metode, media: media,
+          file_url: (elFile && elFile.files && elFile.files[0]) ? elFile.files[0].name : ''
+        } }, 'guruRPP', 'Menyimpan');
         return;
       }
 
@@ -13090,6 +13929,18 @@
     // ================= MODUL PENGUMUMAN KHUSUS (GURU WALI KELAS) =================
 
     // Riwayat pengumuman khusus yang dikirim guru ini
+    PEMUAT.guruPengKhusus = function() {
+      return _muatModul('isi-guru-peng-khusus',
+        [['getBekalInputNilai'], ['getPengumuman']],
+        function(d) {
+          _srvIsi({
+            mapel: (d[0] && d[0].mapel) || [], kelas: (d[0] && d[0].kelas) || [],
+            siswa: (d[0] && d[0].siswa) || [], pengumuman: d[1]
+          });
+          return _htmlIsiGuruPengKhusus();
+        }, 'guruPengKhusus', 4);
+    };
+
     function htmlRiwayatPengumumanKhusus() {
       const sesi = getSession();
       const daftar = _bacaArr('sip_pengumuman').filter(function(p) {
@@ -13108,7 +13959,7 @@
         return (Number(b.id) || 0) - (Number(a.id) || 0);
       });
 
-      const siswa = _bacaArr('sip_siswa');
+      const siswa = _srv('siswa', 'sip_siswa');
 
       return daftar.map(function(p) {
         const st = String(p.status || '');
@@ -13134,6 +13985,11 @@
 
     // Modul Pengumuman Khusus milik Guru Wali Kelas
     function guruPengumumanKhusus() {
+      if (MODE_API) return '<div id="isi-guru-peng-khusus" data-muat="guruPengKhusus"></div>';
+      return _htmlIsiGuruPengKhusus();
+    }
+
+    function _htmlIsiGuruPengKhusus() {
       _pastikanPenyimpananGuru();
 
       const sesi = getSession();
@@ -13149,8 +14005,21 @@
                '</div>';
       }
 
-      const guru = _guruSaya();
-      const idKelasWali = guru ? guru.id_kelas_wali : null;
+      // Kelas yang diampu sebagai wali: dari sesi bila server mengirimnya,
+      // selain itu dari catatan pengguna di peramban
+      const guru = MODE_API ? null : _guruSaya();
+      const idKelasWali = (sesi && sesi.id_kelas_wali) || (guru ? guru.id_kelas_wali : null);
+
+      if (!idKelasWali && MODE_API) {
+        return judul +
+               '<div class="card kosong-card">' +
+                 '<i class="fa-solid fa-triangle-exclamation kosong-ikon"></i>' +
+                 '<span class="kosong-teks">Kelas perwalian belum dikirim server</span>' +
+                 '<span class="kosong-sub">Server belum menyertakan kolom id_kelas_wali ' +
+                   'pada data sesi, sehingga penerima pesan belum bisa ditentukan. ' +
+                   'Sampaikan ke pengelola agar kolom ini ditambahkan.</span>' +
+               '</div>';
+      }
 
       if (!idKelasWali) {
         return judul +
@@ -13162,8 +14031,8 @@
                '</div>';
       }
 
-      const namaKelas = _namaDari(_bacaArr('sip_kelas'), idKelasWali, 'nama');
-      const siswaKelas = _bacaArr('sip_siswa').filter(function(s) {
+      const namaKelas = _namaDari(_srv('kelas', 'sip_kelas'), idKelasWali, 'nama');
+      const siswaKelas = _srv('siswa', 'sip_siswa').filter(function(s) {
         return s && s.id !== undefined && String(s.id_kelas) === String(idKelasWali);
       });
       siswaKelas.sort(function(a, b) {
@@ -13188,7 +14057,7 @@
           '<label class="form-label" for="khususPesan">Isi Pesan</label>' +
           '<textarea id="khususPesan" class="input" rows="4" ' +
             'placeholder="Tulis pesan untuk wali murid siswa ini..."></textarea>' +
-          '<button class="btn btn--full" onclick="kirimPengumumanKhusus()">' +
+          '<button class="btn btn--full" id="khusus-kirim" onclick="kirimPengumumanKhusus()">' +
             '<i class="fa-solid fa-paper-plane"></i> Kirim Pengumuman</button>';
       }
 
@@ -13202,7 +14071,7 @@
     }
 
     // Kirim satu pengumuman khusus. Statusnya menunggu persetujuan Kepala Sekolah.
-    function kirimPengumumanKhusus() {
+    async function kirimPengumumanKhusus() {
       const sesi = getSession();
       const elSiswa = document.getElementById('khususSiswa');
       const elPesan = document.getElementById('khususPesan');
@@ -13218,11 +14087,18 @@
         return;
       }
 
-      const siswa = _bacaArr('sip_siswa').find(function(s) {
+      const siswa = _srv('siswa', 'sip_siswa').find(function(s) {
         return s && String(s.id) === String(elSiswa.value);
       });
       if (!siswa) {
         showNotif('Data siswa tidak ditemukan', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        await _kirimAksi('khusus-kirim', 'createPengumuman',
+          { data: { tipe: 'khusus', id_penerima_siswa: siswa.id, konten: konten } },
+          'guruPengKhusus', 'Mengirim');
         return;
       }
 
@@ -13331,8 +14207,9 @@
         isi = waliMuridTagihan();
       } else if (sesi && sesi.role === 'walimurid' && namaMenu === 'Pengumuman') {
         isi = waliMuridPengumuman();
-      } else if (sesi && sesi.role === 'walimurid' && namaMenu === 'Profil') {
-        isi = waliMuridProfil();
+      } else if (namaMenu === 'Profil') {
+        // Setiap peran perlu bisa mengganti PIN-nya sendiri
+        isi = modulProfil();
       }
 
       // Titipan modul sebelumnya dibuang supaya tidak terbawa ke modul baru
