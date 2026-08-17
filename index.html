@@ -3409,7 +3409,12 @@
       }
 
       if (namaPemuat && typeof PEMUAT[namaPemuat] === 'function') {
+        // Pemuat menggambar ulang modulnya, tombol sibuk ikut terganti
         await PEMUAT[namaPemuat]();
+      } else {
+        // Tidak ada yang menggambar ulang, jadi tombolnya dipulihkan sendiri.
+        // Tanpa ini tombol akan tersangkut pada teks sibuk selamanya.
+        _tombolPulih(tombol, semula);
       }
       showNotif(hasil.message || 'Berhasil', 'success');
       return true;
