@@ -2729,13 +2729,16 @@
       document.documentElement.setAttribute('data-theme', saved);
     })();
 
-    // Data akun dummy untuk uji coba login
+    // Akun contoh untuk mode tanpa server (MODE_API = false).
+    // Alamatnya sengaja memakai domain .local yang tidak mungkin dipakai
+    // sungguhan, supaya berkas ini tidak pernah menyerupai daftar kata sandi
+    // akun asli meskipun repositorinya terbuka.
     const DUMMY_USERS = [
-      { id:1, nama:'Kepala Sekolah', email:'kepsek@sip.sch.id', pin:'123456', role:'kepsek', aktif:true },
-      { id:2, nama:'Bendahara', email:'bendahara@sip.sch.id', pin:'123456', role:'bendahara', aktif:true },
-      { id:3, nama:'KTU', email:'ktu@sip.sch.id', pin:'123456', role:'ktu', aktif:true },
-      { id:4, nama:'Ustadz Ahmad', email:'wali@sip.sch.id', pin:'123456', role:'guru', subrole:'walikelas', aktif:true },
-      { id:5, nama:'Orang Tua Santri A', email:'ortu@sip.sch.id', pin:'123456', role:'walimurid', aktif:true }
+      { id:1, nama:'Kepala Sekolah', email:'kepsek@contoh.local', pin:'000000', role:'kepsek', aktif:true },
+      { id:2, nama:'Bendahara', email:'bendahara@contoh.local', pin:'000000', role:'bendahara', aktif:true },
+      { id:3, nama:'KTU', email:'ktu@contoh.local', pin:'000000', role:'ktu', aktif:true },
+      { id:4, nama:'Ustadz Ahmad', email:'walikelas@contoh.local', pin:'000000', role:'guru', subrole:'walikelas', aktif:true },
+      { id:5, nama:'Orang Tua Santri A', email:'ortu@contoh.local', pin:'000000', role:'walimurid', aktif:true }
     ];
 
     // Daftar menu sidebar untuk setiap role
@@ -2902,7 +2905,7 @@
         no_hp_orangtua: '081234567890',
         jumlah_saudara: 2,
         id_wali_murid: 5,
-        email_wali_murid: 'ortu@sip.sch.id',
+        email_wali_murid: 'ortu@contoh.local',
         status_data: 'pending',
         diinput_oleh: 'KTU',
         tgl_input: new Date(),
@@ -9281,7 +9284,7 @@
             '<div class="subform" id="subformWali" style="display:none">' +
               '<div class="form-grid-2">' +
                 isian('waliNama', 'Nama Wali Murid', 'text', 'placeholder="Nama lengkap wali"') +
-                isian('waliEmail', 'Email Wali Murid', 'email', 'placeholder="wali@sip.sch.id"') +
+                isian('waliEmail', 'Email Wali Murid', 'email', 'placeholder="nama@contoh.local"') +
                 isian('waliHp', 'No HP Wali Murid', 'text', 'placeholder="081234567890"') +
                 isian('waliPin', 'PIN', 'password', 'maxlength="6" inputmode="numeric" pattern="[0-9]*" placeholder="6 digit angka"') +
               '</div>' +

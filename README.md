@@ -13,9 +13,17 @@ Yang melindungi data Anda hanyalah **PIN tiap pengguna**. Karena itu:
 
 - **Ganti PIN semua akun** lewat menu Profil → Ganti PIN. Jangan pakai angka
   berurutan seperti `123456`.
+- **Tutup akses Google Sheet-nya.** PIN disimpan sebagai sidik SHA-256, tetapi
+  PIN 6 digit hanya punya sejuta kemungkinan — siapa pun yang bisa membaca
+  sheet-nya dapat mencoba semuanya dalam hitungan detik. Pengaman sesungguhnya
+  adalah sheet yang tidak dibagikan, bukan panjang PIN-nya.
 - Jangan menaruh data pribadi santri yang sensitif selama masih tahap uji coba.
 - Kalau alamat backend perlu diganti, jalankan *Deploy ulang* di Apps Script
   sehingga URL lama tidak berlaku lagi, lalu perbarui `API_URL`.
+
+Akun contoh di dalam `index.html` (`DUMMY_USERS`) memakai domain `@contoh.local`
+dan hanya dipakai saat `MODE_API = false`. Akun itu tidak ada di server, jadi
+berkas ini tidak pernah menjadi daftar kata sandi akun sungguhan.
 
 ## Peran pengguna
 
@@ -85,6 +93,25 @@ Data server dititipkan pada `SRV` lewat `_srvIsi()`, lalu dibaca fungsi penggamb
 dengan `_srv('kunciServer', 'kunciLokal')`: server bila ada, `localStorage` bila
 aplikasi dijalankan tanpa backend. `loadModule()` mengosongkan `SRV` setiap
 berpindah modul supaya titipan modul lama tidak terbawa.
+
+## Menambah akun langsung dari Google Sheet
+
+Kolom `pin` pada sheet **Users** menyimpan sidik SHA-256, bukan angka PIN-nya.
+PIN yang diketik apa adanya tidak akan pernah cocok saat login, dan akunnya
+menjadi terkunci.
+
+Jembatannya ada di menu **SIP Al-Bustomi → Sinkronkan PIN & ID pengguna**
+(fungsi `sinkronkanUsers` di `Code.gs`). Ketik baris baru seperti biasa —
+`pin` diisi 6 digit apa adanya, kolom `id` boleh dikosongkan — lalu jalankan
+menu itu. PIN mentah diubah menjadi sidiknya dan `id` kosong diberi nomor.
+
+Aman dijalankan berulang: PIN yang sudah berbentuk sidik tidak diacak dua kali.
+Fungsi ini juga melaporkan baris yang belum siap (role kosong, `aktif` belum
+`TRUE`, PIN tidak sah, email kembar). Kolom `aktif` sengaja tidak diisi
+otomatis — mengaktifkan akun adalah wewenang Kepala Sekolah lewat Approve Akun.
+
+Cara yang tidak menyentuh sheet sama sekali: **KTU → Pendaftaran Akun**, yang
+memakai aksi `createAccount` dan mengacak PIN-nya di server.
 
 ## Menjalankan secara lokal
 

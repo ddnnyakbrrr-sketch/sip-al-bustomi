@@ -3304,3 +3304,113 @@ function getBekalInputNilai(token) {
     isi.kelas.length + ' kelas, ' +
     isi.siswa.length + ' siswa)');
 }
+
+
+/* =================== 34. Sinkronisasi Users dari Sheet ==================== */
+
+/**
+ * Kolom "pin" menyimpan sidik SHA-256, bukan angka PIN-nya. Karena itu PIN
+ * yang diketik langsung di sheet tidak akan pernah cocok saat login.
+ *
+ * Fungsi di bawah ini menjembatani hal tersebut: baris yang PIN-nya masih
+ * berupa 6 digit angka diubah menjadi sidiknya, dan baris baru yang belum
+ * ber-id diberi nomor. Dijalankan lewat menu, bukan lewat doPost, sehingga
+ * tidak mengubah perilaku web app dan tidak perlu deploy ulang.
+ */
+
+/** Pasang menu sendiri saat spreadsheet dibuka. */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('SIP Al-Bustomi')
+    .addItem('Sinkronkan PIN & ID pengguna', 'sinkronkanUsers')
+    .addToUi();
+}
+
+/** Sidik SHA-256 selalu 64 huruf heksadesimal. Selain itu dianggap masih mentah. */
+function _sudahDiacak(nilai) {
+  return /^[0-9a-f]{64}$/i.test(String(nilai).trim());
+}
+
+/**
+ * Rapikan sheet Users: acak PIN yang masih mentah, isi id yang kosong,
+ * dan laporkan baris yang belum siap dipakai.
+ */
+function sinkronkanUsers() {
+  var t = _tabel('Users');
+  var diacak = 0, diberiId = 0, sudahRapi = 0;
+  var perhatian = [];
+  var emailTerpakai = {};
+
+  // Nomor disiapkan lebih dulu supaya id baru tidak saling bertabrakan
+  var idBerikut = _idBaru(t);
+
+  for (var n = 0; n < t.baris.length; n++) {
+    var email = String(_nilai(t, n, 'email') || '').trim();
+    if (!email) continue;                       // baris kosong di bawah data
+    var barisSheet = n + 2;                     // +2 karena baris 1 header
+
+    // Pencocokan email saat login membedakan huruf besar-kecil, jadi dua
+    // baris yang hanya beda kapitalisasi tetap menjadi dua akun terpisah
+    var kunci = email.toLowerCase();
+    var sebelumnya = emailTerpakai[kunci];
+    if (sebelumnya) {
+      perhatian.push('Baris ' + barisSheet + ' (' + email + '): ' +
+        (sebelumnya.email === email
+          ? 'email persis sama dengan baris ' + sebelumnya.baris +
+            '. Login hanya akan menemukan baris ' + sebelumnya.baris + '.'
+          : 'email mirip baris ' + sebelumnya.baris + ' (' + sebelumnya.email + '), ' +
+            'beda huruf besar-kecil saja. Keduanya jadi akun terpisah dan mudah tertukar.'));
+    } else {
+      emailTerpakai[kunci] = { baris: barisSheet, email: email };
+    }
+
+    if (String(_nilai(t, n, 'id') || '').trim() === '') {
+      _tulis(t, n, 'id', idBerikut);
+      idBerikut++;
+      diberiId++;
+    }
+
+    if (!String(_nilai(t, n, 'role') || '').trim()) {
+      perhatian.push('Baris ' + barisSheet + ' (' + email + '): kolom role masih kosong.');
+    }
+
+    // Akun dengan aktif kosong/FALSE ditolak saat login. Sengaja tidak
+    // diaktifkan otomatis — mengaktifkan akun itu wewenang Kepala Sekolah.
+    if (!_bool(_nilai(t, n, 'aktif'))) {
+      perhatian.push('Baris ' + barisSheet + ' (' + email + '): kolom aktif belum TRUE, ' +
+                     'akun ini belum bisa login.');
+    }
+
+    var pin = String(_nilai(t, n, 'pin') || '').trim();
+    if (pin === '') {
+      perhatian.push('Baris ' + barisSheet + ' (' + email + '): PIN masih kosong.');
+      continue;
+    }
+    if (_sudahDiacak(pin)) { sudahRapi++; continue; }
+    if (!/^\d{6}$/.test(pin)) {
+      perhatian.push('Baris ' + barisSheet + ' (' + email + '): PIN harus 6 digit angka, ' +
+                     'baris ini dilewati.');
+      continue;
+    }
+
+    _tulis(t, n, 'pin', _hashPin(pin));
+    diacak++;
+  }
+
+  var pesan = diacak + ' PIN diacak, ' + diberiId + ' id diisi, ' +
+              sudahRapi + ' sudah rapi sejak awal.';
+  if (perhatian.length) {
+    pesan += '\n\nPerlu diperiksa:\n• ' + perhatian.join('\n• ');
+  }
+
+  // Selalu dicatat di log supaya tetap terbaca saat dijalankan dari editor,
+  // tempat kotak dialog tidak selalu bisa muncul
+  Logger.log(pesan);
+  try {
+    var ui = SpreadsheetApp.getUi();
+    ui.alert('Sinkronisasi Users', pesan, ui.ButtonSet.OK);
+  } catch (err) {
+    // Tidak ada antarmuka: cukup lewat log
+  }
+  return pesan;
+}
