@@ -3009,6 +3009,10 @@
         return;
       }
 
+      // Tiap peran melihat cakupan data yang berbeda, jadi singgahan pengguna
+      // sebelumnya tidak boleh terbawa ke sesi baru
+      _singgahanKosongkan();
+
       sessionStorage.setItem('sip_session', JSON.stringify({
         id: hasil.data.id,
         nama: hasil.data.nama,
@@ -3024,6 +3028,7 @@
     // Keluar dari aplikasi dan kembali ke halaman login
     function logout() {
       sessionStorage.removeItem('sip_session');
+      _singgahanKosongkan();
 
       // Halaman login hanya disembunyikan, tidak dibuat ulang, sehingga isian
       // lamanya akan bertahan. Keduanya dikosongkan supaya pengguna berikutnya
@@ -3350,7 +3355,43 @@
      * namaPemuat  : kunci di PEMUAT, dipakai tombol "Coba Lagi"
      * barisRangka : jumlah batang kerangka saat menunggu
      */
-    async function _muatModul(idWadah, daftarAksi, gambar, namaPemuat, barisRangka) {
+    /* Singgahan jawaban server berumur pendek.
+     *
+     * Satu bolak-balik ke Apps Script memakan ~3 detik, dan itu tidak bisa
+     * ditawar. Yang bisa ditekan adalah berapa kali kita menempuhnya:
+     * getSiswa dipakai 9 modul, getPengumuman 9 modul, dan sebelum ini
+     * setiap perpindahan menu menjemputnya lagi dari nol.
+     *
+     * Umurnya sengaja pendek, dan setiap aksi tulis membuangnya, supaya
+     * angka yang tampil tidak pernah tertinggal dari keadaan sebenarnya.
+     */
+    const UMUR_SINGGAHAN_MS = 60000;
+    const SINGGAHAN = {};
+
+    function _singgahanKosongkan() {
+      Object.keys(SINGGAHAN).forEach(function(k) { delete SINGGAHAN[k]; });
+    }
+
+    // Jemput satu aksi, pakai singgahan bila masih segar
+    async function _jemput(aksi, muatan, paksaSegar) {
+      const kunci = aksi + '|' + JSON.stringify(muatan || {});
+      const simpan = SINGGAHAN[kunci];
+
+      if (!paksaSegar && simpan && (Date.now() - simpan.waktu) < UMUR_SINGGAHAN_MS) {
+        return simpan.jawaban;
+      }
+
+      const jawaban = await callAPI(aksi, muatan || {});
+
+      // Hanya jawaban berhasil yang disinggahi. Kegagalan harus selalu
+      // dicoba ulang sungguhan, bukan diulang dari catatan lama.
+      if (jawaban && jawaban.status === 'success') {
+        SINGGAHAN[kunci] = { waktu: Date.now(), jawaban: jawaban };
+      }
+      return jawaban;
+    }
+
+    async function _muatModul(idWadah, daftarAksi, gambar, namaPemuat, barisRangka, paksaSegar) {
       const wadah = document.getElementById(idWadah);
       if (!wadah) return;
 
@@ -3359,14 +3400,16 @@
       // Seluruh aksi dijemput serentak, bukan bergiliran. Satu panggilan
       // Apps Script memakan 3-4 detik, jadi menunggunya berbaris akan terasa.
       const jawaban = await Promise.all(
-        daftarAksi.map(function(a) { return callAPI(a[0], a[1] || {}); })
+        daftarAksi.map(function(a) { return _jemput(a[0], a[1] || {}, paksaSegar); })
       );
 
       // Wadahnya bisa saja sudah lenyap kalau pengguna pindah modul
       // selagi data masih dijemput. Menulis ke elemen yatim itu percuma.
       if (!document.getElementById(idWadah)) return;
 
-      const ulang = 'PEMUAT[\'' + namaPemuat + '\']()';
+      // "Coba Lagi" membuang singgahan lebih dulu supaya benar-benar
+      // menjemput ulang, bukan mengulang catatan lama
+      const ulang = '_singgahanKosongkan(); PEMUAT[\'' + namaPemuat + '\']()';
 
       for (let i = 0; i < jawaban.length; i++) {
         const j = jawaban[i];
@@ -3407,6 +3450,9 @@
         showNotif((hasil && hasil.message) || 'Aksi gagal dijalankan', 'error');
         return false;
       }
+
+      // Data di server sudah berubah, jadi seluruh singgahan tidak berlaku lagi
+      _singgahanKosongkan();
 
       if (namaPemuat && typeof PEMUAT[namaPemuat] === 'function') {
         // Pemuat menggambar ulang modulnya, tombol sibuk ikut terganti
