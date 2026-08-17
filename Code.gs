@@ -98,6 +98,105 @@ function _cari(t, namaKolom, nilai) {
   return -1;
 }
 
+/**
+ * Pembaca/penulis kolom yang boleh saja belum ada di sheet.
+ *
+ * _kol() sengaja melempar error supaya salah ketik nama kolom ketahuan
+ * seketika. Tetapi beberapa kolom ditambahkan belakangan, dan sheet lama
+ * yang dibuat dari dokumentasi versi awal belum memilikinya. Untuk kolom
+ * seperti itu dipakai pasangan fungsi di bawah ini: tidak ada kolomnya
+ * berarti nilainya kosong, bukan aplikasi berhenti.
+ */
+function _nilaiOp(t, n, namaKolom) {
+  var i = t.header.indexOf(namaKolom);
+  return i === -1 ? '' : t.baris[n][i];
+}
+
+function _tulisOp(t, n, namaKolom, isi) {
+  var i = t.header.indexOf(namaKolom);
+  if (i === -1) return false;
+  t.sheet.getRange(n + 2, i + 1).setValue(isi);
+  t.baris[n][i] = isi;
+  return true;
+}
+
+/**
+ * Simpan satu berkas base64 ke folder Drive bukti pembayaran.
+ * Dipakai wali murid maupun bendahara supaya cara menyimpannya seragam.
+ * Mengembalikan { ok, url } atau { ok:false, pesan }.
+ */
+function _simpanBukti(namaDasar, fileBase64) {
+  if (ID_FOLDER_BUKTI_BAYAR === 'GANTI_DENGAN_ID_FOLDER_DRIVE') {
+    return { ok: false, pesan: 'ID_FOLDER_BUKTI_BAYAR belum dikonfigurasi pada script' };
+  }
+
+  // Pisahkan prefiks data URI bila ada, ambil tipe berkasnya
+  var mime = 'image/jpeg';
+  var isi = String(fileBase64 || '');
+  var cocok = isi.match(/^data:([^;]+);base64,(.*)$/);
+  if (cocok) { mime = cocok[1]; isi = cocok[2]; }
+  if (!isi) return { ok: false, pesan: 'Berkas bukti kosong' };
+
+  try {
+    var ekstensi = (mime.split('/')[1] || 'jpg').split('+')[0];
+    var namaFile = namaDasar + '_' + new Date().getTime() + '.' + ekstensi;
+    var blob = Utilities.newBlob(Utilities.base64Decode(isi), mime, namaFile);
+    var file = DriveApp.getFolderById(ID_FOLDER_BUKTI_BAYAR).createFile(blob);
+    return { ok: true, url: file.getUrl() };
+  } catch (err) {
+    return { ok: false, pesan: 'Gagal menyimpan berkas: ' + err.message };
+  }
+}
+
+/** Kelas yang diampu seorang guru sebagai wali kelas. '' bila bukan wali kelas. */
+function _kelasWali(idUser) {
+  try {
+    var g = _tabel('Guru');
+    var n = _cari(g, 'id_user', idUser);
+    return n === -1 ? '' : (_nilaiOp(g, n, 'id_kelas_wali') || '');
+  } catch (err) {
+    return '';   // sheet Guru belum ada: anggap bukan wali kelas
+  }
+}
+
+
+/* --------------------- Pembatas percobaan login --------------------------- */
+
+/**
+ * PIN hanya 6 digit, jadi seluruh kemungkinannya cuma sejuta. Tanpa
+ * pembatas, siapa pun yang tahu alamat web app ini bisa mencobanya satu
+ * per satu. Hitungan gagal disimpan di CacheService supaya tidak
+ * membebani sheet, dan hangus sendiri setelah jendelanya lewat.
+ *
+ * Konsekuensinya perlu disadari: orang lain bisa membuat sebuah akun
+ * terkunci sementara dengan sengaja menggagalkan login. Karena itu
+ * kuncinya dibuat singkat, bukan permanen.
+ */
+var MAKS_GAGAL_LOGIN = 5;
+var KUNCI_LOGIN_MENIT = 15;
+
+function _kunciGagal(email) {
+  return 'gagal_login_' + String(email).trim().toLowerCase();
+}
+
+function _sisaJatahLogin(email) {
+  var isi = CacheService.getScriptCache().get(_kunciGagal(email));
+  return MAKS_GAGAL_LOGIN - (isi ? Number(isi) : 0);
+}
+
+function _catatGagalLogin(email) {
+  var cache = CacheService.getScriptCache();
+  var k = _kunciGagal(email);
+  var n = Number(cache.get(k) || 0) + 1;
+  cache.put(k, String(n), KUNCI_LOGIN_MENIT * 60);
+  return n;
+}
+
+function _bersihkanGagalLogin(email) {
+  CacheService.getScriptCache().remove(_kunciGagal(email));
+}
+
+
 /** Hash PIN dengan SHA-256, hasil berupa string heksadesimal. */
 function _hashPin(pin) {
   var byteArr = Utilities.computeDigest(
@@ -392,7 +491,7 @@ function doPost(e) {
           break;
 
         case 'catatPembayaran':
-          hasil = catatPembayaran(p.tagihanId, p.buktiUrl, token);
+          hasil = catatPembayaran(p.tagihanId, p.buktiUrl, p.fileBase64, token);
           break;
 
         case 'catatTransaksi':
@@ -551,6 +650,10 @@ function doPost(e) {
           hasil = approvePembayaranKTU(p.transaksiId, p.status, token);
           break;
 
+        case 'getProfilSaya':
+          hasil = getProfilSaya(token);
+          break;
+
         case 'getKonfigurasi':
           hasil = getKonfigurasi(token);
           break;
@@ -644,23 +747,39 @@ function login(email, pin) {
     return _respon('error', null, 'Email atau PIN salah');
   }
 
+  // Jatah percobaan diperiksa lebih dulu, sebelum sheet dibaca sama sekali
+  if (_sisaJatahLogin(email) <= 0) {
+    _log(null, 'LOGIN_DIKUNCI', 'Percobaan berlebihan untuk email: ' + email);
+    return _respon('error', null,
+      'Terlalu banyak percobaan gagal. Coba lagi sekitar ' + KUNCI_LOGIN_MENIT + ' menit lagi.');
+  }
+
   var t = _tabel('Users');
   var n = _cari(t, 'email', String(email).trim());
 
+  // Email tak dikenal dan PIN salah dijawab sama persis, supaya tidak bisa
+  // dipakai menebak-nebak alamat mana yang terdaftar
   if (n === -1) {
+    _catatGagalLogin(email);
     _log(null, 'LOGIN_GAGAL', 'Email tidak terdaftar: ' + email);
     return _respon('error', null, 'Email atau PIN salah');
   }
 
   if (String(_nilai(t, n, 'pin')) !== _hashPin(pin)) {
-    _log(null, 'LOGIN_GAGAL', 'PIN salah untuk email: ' + email);
-    return _respon('error', null, 'Email atau PIN salah');
+    var sisa = MAKS_GAGAL_LOGIN - _catatGagalLogin(email);
+    _log(null, 'LOGIN_GAGAL', 'PIN salah untuk email: ' + email + ' (sisa percobaan ' + sisa + ')');
+    return _respon('error', null, sisa > 0
+      ? 'Email atau PIN salah. Sisa percobaan: ' + sisa + '.'
+      : 'Terlalu banyak percobaan gagal. Coba lagi sekitar ' + KUNCI_LOGIN_MENIT + ' menit lagi.');
   }
 
   if (!_bool(_nilai(t, n, 'aktif'))) {
     _log(null, 'LOGIN_GAGAL', 'Akun belum aktif: ' + email);
     return _respon('error', null, 'Akun belum diaktifkan oleh Kepala Sekolah');
   }
+
+  // Berhasil masuk: hitungan gagal dikembalikan ke nol
+  _bersihkanGagalLogin(email);
 
   // Token = UUID + timestamp, berlaku 24 jam ke depan
   var token = Utilities.getUuid() + '-' + new Date().getTime();
@@ -682,7 +801,9 @@ function login(email, pin) {
     id: user.id,
     nama: user.nama,
     role: user.role,
-    subrole: user.subrole || ''
+    subrole: user.subrole || '',
+    // Dipakai modul Pengumuman Khusus untuk menentukan kelas perwaliannya
+    id_kelas_wali: _kelasWali(user.id)
   }, 'Login berhasil');
 }
 
@@ -836,12 +957,46 @@ function approveTransaksi(transaksiId, status, token) {
     return _respon('error', null, 'Transaksi tidak ditemukan');
   }
 
+  // Hanya yang masih menggantung boleh diputus. Tanpa penjagaan ini satu
+  // transaksi bisa disetujui dua kali, dan tagihannya ikut terbolak-balik.
+  var statusLama = String(_nilai(t, n, 'status_approval'));
+  if (statusLama !== 'pending' && statusLama !== 'pending_Kepsek') {
+    return _respon('error', null,
+      'Transaksi ini sudah diproses (status sekarang: ' + statusLama + ')');
+  }
+
   _tulis(t, n, 'status_approval', statusBaru);
   _tulis(t, n, 'approved_by', cek.user.id);
+
+  // Transaksi yang berasal dari pembayaran tagihan menentukan nasib
+  // tagihannya: disetujui berarti lunas, ditolak berarti bisa ditagih lagi.
+  var idTagihan = _nilaiOp(t, n, 'id_tagihan');
+  if (idTagihan !== '' && idTagihan !== null && idTagihan !== undefined) {
+    _kembalikanTagihan(idTagihan, statusBaru === 'approved' ? 'lunas' : 'belum lunas', cek.user);
+  }
+
   _logApproval('transaksi', transaksiId, statusBaru, cek.user.id, 'Keputusan Kepala Sekolah');
   _log(cek.user, 'APPROVE_TRANSAKSI', 'Transaksi id ' + transaksiId + ' menjadi ' + statusBaru);
 
   return _respon('success', { id: transaksiId, status_approval: statusBaru }, 'Status transaksi diperbarui');
+}
+
+
+/**
+ * Tetapkan status sebuah tagihan mengikuti keputusan atas transaksinya.
+ * Dipisah supaya KTU dan Kepala Sekolah memakai jalan yang sama persis,
+ * dan supaya id tagihan yang kosong tidak menyebabkan error.
+ */
+function _kembalikanTagihan(idTagihan, statusBaru, user) {
+  if (idTagihan === '' || idTagihan === null || idTagihan === undefined) return;
+
+  var t = _tabel('Tagihan_Siswa');
+  var n = _cari(t, 'id', idTagihan);
+  if (n === -1) return;
+
+  _tulis(t, n, 'status_bayar', statusBaru);
+  _tulis(t, n, 'tgl_bayar', statusBaru === 'lunas' ? new Date() : '');
+  _log(user, 'STATUS_TAGIHAN', 'Tagihan id ' + idTagihan + ' menjadi ' + statusBaru);
 }
 
 
@@ -1141,14 +1296,29 @@ function createPengumuman(data, token) {
 
   data = data || {};
   var tipe = String(data.tipe || '').toLowerCase();
-  if (['global', 'khusus', 'tagihan'].indexOf(tipe) === -1) {
-    return _respon('error', null, 'Tipe pengumuman harus global/khusus/tagihan');
+  if (['global', 'khusus', 'tagihan', 'personal'].indexOf(tipe) === -1) {
+    return _respon('error', null, 'Tipe pengumuman harus global/khusus/tagihan/personal');
   }
   if (!data.konten) {
     return _respon('error', null, 'Konten pengumuman wajib diisi');
   }
 
-  var statusAwal = (tipe === 'tagihan') ? 'pending_KTU' : 'pending';
+  var statusAwal;
+  if (tipe === 'tagihan') {
+    statusAwal = 'pending_KTU';               // Bendahara -> KTU -> Kepala Sekolah
+  } else if (tipe === 'personal') {
+    // Pesan pribadi dari Kepala Sekolah ke staf. Beliau penyetuju tertinggi,
+    // jadi tidak ada yang perlu menyetujui lagi di atasnya.
+    if (String(cek.user.role).trim().toLowerCase() !== 'kepsek') {
+      return _respon('error', null, 'Pengumuman personal hanya boleh dibuat Kepala Sekolah');
+    }
+    if (!data.id_penerima_user) {
+      return _respon('error', null, 'Penerima pengumuman personal wajib dipilih');
+    }
+    statusAwal = 'approved';
+  } else {
+    statusAwal = 'pending';                   // global & khusus -> Kepala Sekolah
+  }
 
   var t = _tabel('Pengumuman');
   var idBaru = _idBaru(t);
@@ -1156,12 +1326,18 @@ function createPengumuman(data, token) {
     id: idBaru,
     dari_id_user: cek.user.id,
     dari_nama: cek.user.nama,
+    dari_role: cek.user.role,
     tipe: tipe,
+    judul: data.judul || '',
+    // Sasaran dipakai penyaring di sisi wali murid. Tanpa nilai ini
+    // pengumuman tidak akan pernah lolos saringan dan seolah hilang.
+    target: data.target || 'semua',
     id_penerima_siswa: data.id_penerima_siswa || '',
+    id_penerima_user: data.id_penerima_user || '',
     konten: data.konten,
     status: statusAwal,
     tgl: new Date(),
-    approved_by: ''
+    approved_by: statusAwal === 'approved' ? cek.user.id : ''
   });
 
   _logApproval('pengumuman', idBaru, statusAwal, cek.user.id, 'Pengumuman tipe ' + tipe + ' dibuat');
@@ -1243,7 +1419,7 @@ function getTagihanMenunggak() {
  * Bendahara mencatat pelunasan tagihan.
  * Tagihan ditandai lunas dan otomatis dicatat sebagai pemasukan.
  */
-function catatPembayaran(tagihanId, buktiUrl, token) {
+function catatPembayaran(tagihanId, buktiUrl, fileBase64, token) {
   var cek = _wajibRole(token, ['bendahara']);
   if (!cek.ok) return cek.respon;
 
@@ -1254,18 +1430,37 @@ function catatPembayaran(tagihanId, buktiUrl, token) {
     return _respon('error', null, 'Tagihan tidak ditemukan');
   }
 
-  if (String(_nilai(t, n, 'status_bayar')).toLowerCase() === 'lunas') {
+  var statusSekarang = String(_nilai(t, n, 'status_bayar')).toLowerCase();
+  if (statusSekarang === 'lunas') {
     return _respon('error', null, 'Tagihan ini sudah lunas');
+  }
+  if (statusSekarang === 'proses') {
+    return _respon('error', null, 'Pembayaran tagihan ini sedang menunggu persetujuan');
   }
 
   var nominal = Number(_nilai(t, n, 'nominal')) || 0;
   var idSiswa = _nilai(t, n, 'id_siswa');
+  var idBiaya = _nilai(t, n, 'id_biaya');
 
-  _tulis(t, n, 'status_bayar', 'lunas');
-  _tulis(t, n, 'tgl_bayar', new Date());
-  if (buktiUrl) _tulis(t, n, 'bukti_url', buktiUrl);
+  // Bukti boleh berupa berkas yang diunggah, atau tautan yang sudah ada
+  var urlBukti = String(buktiUrl || '');
+  if (fileBase64) {
+    var simpan = _simpanBukti('bukti_' + tagihanId, fileBase64);
+    if (!simpan.ok) {
+      _log(cek.user, 'CATAT_BAYAR_GAGAL', 'Bukti gagal disimpan: ' + simpan.pesan);
+      return _respon('error', null, simpan.pesan);
+    }
+    urlBukti = simpan.url;
+  }
 
-  // Catat sebagai pemasukan yang langsung disetujui
+  // Tagihan BELUM lunas di sini. Bendahara hanya mengajukan; yang
+  // melunaskannya adalah keputusan Kepala Sekolah di ujung alur.
+  // Status "proses" mencegah tagihan yang sama diajukan dua kali.
+  _tulis(t, n, 'status_bayar', 'proses');
+  if (urlBukti) _tulis(t, n, 'bukti_url', urlBukti);
+
+  // Pemasukan dicatat sebagai pengajuan, menunggu KTU lalu Kepala Sekolah.
+  // Bendahara tidak boleh menjadi penyetuju atas catatannya sendiri.
   var tTrx = _tabel('Transaksi_Keuangan');
   var idTrx = _idBaru(tTrx);
   _tambah(tTrx, {
@@ -1274,18 +1469,25 @@ function catatPembayaran(tagihanId, buktiUrl, token) {
     jumlah: nominal,
     deskripsi: 'Pembayaran tagihan id ' + tagihanId + ' (siswa id ' + idSiswa + ')',
     id_pengaju: cek.user.id,
-    status_approval: 'approved',
-    approved_by: cek.user.id,
-    tgl: new Date()
+    status_approval: 'pending_KTU',
+    approved_by: '',
+    tgl: new Date(),
+    id_tagihan: tagihanId,
+    id_siswa: idSiswa,
+    id_biaya: idBiaya,
+    bukti: urlBukti
   });
 
-  _log(cek.user, 'CATAT_PEMBAYARAN', 'Tagihan id ' + tagihanId + ' lunas sebesar ' + nominal);
+  _logApproval('transaksi', idTrx, 'pending_KTU', cek.user.id,
+    'Pembayaran tagihan id ' + tagihanId + ' diajukan Bendahara');
+  _log(cek.user, 'CATAT_PEMBAYARAN',
+    'Tagihan id ' + tagihanId + ' diajukan sebesar ' + nominal + ' (menunggu KTU)');
 
   return _respon('success', {
     id_tagihan: tagihanId,
-    status_bayar: 'lunas',
+    status_bayar: 'proses',
     id_transaksi: idTrx
-  }, 'Pembayaran berhasil dicatat');
+  }, 'Pembayaran dicatat. Menunggu persetujuan KTU lalu Kepala Sekolah.');
 }
 
 
@@ -1875,6 +2077,15 @@ function getPengumuman(filter, token) {
   var role = String(cek.user.role).trim().toLowerCase();
   var semua = _semuaObjek(_tabel('Pengumuman'));
 
+  // Wali murid hanya berhak atas pesan mengenai anaknya sendiri. Daftar
+  // anaknya disiapkan sekali di sini, bukan dicari ulang tiap baris.
+  var anakSaya = {};
+  if (role === 'walimurid') {
+    _semuaObjek(_tabel('Siswa')).forEach(function (sw) {
+      if (String(sw.id_wali_murid) === String(cek.user.id)) anakSaya[String(sw.id)] = true;
+    });
+  }
+
   var daftar = semua.filter(function (p) {
     if (!_cocok(p, {
       tipe: filter.tipe,
@@ -1883,12 +2094,29 @@ function getPengumuman(filter, token) {
       dari_id_user: filter.dari_id_user
     })) return false;
 
-    // Kepala Sekolah dan KTU boleh melihat yang belum disetujui
-    if (role === 'kepsek' || role === 'ktu') return true;
+    var tipe = String(p.tipe || '').toLowerCase();
+    var pengirim = String(p.dari_id_user) === String(cek.user.id);
 
-    // Selain itu: hanya yang sudah disetujui, atau kiriman sendiri
+    // Pesan pribadi: hanya pengirim dan orang yang dituju. Peran lain,
+    // termasuk KTU, tidak berkepentingan membacanya.
+    if (tipe === 'personal') {
+      return pengirim || String(p.id_penerima_user) === String(cek.user.id);
+    }
+
+    // Pesan wali kelas menyangkut satu siswa tertentu. Wali murid lain
+    // tidak boleh ikut membacanya meskipun sudah disetujui.
+    if (tipe === 'khusus') {
+      if (pengirim || role === 'kepsek' || role === 'ktu') return true;
+      return role === 'walimurid' &&
+             String(p.status) === 'approved' &&
+             anakSaya[String(p.id_penerima_siswa)] === true;
+    }
+
+    // Pengumuman global dan tagihan: Kepala Sekolah dan KTU melihat
+    // semuanya karena merekalah yang menyetujui
+    if (role === 'kepsek' || role === 'ktu') return true;
     if (String(p.status) === 'approved') return true;
-    return String(p.dari_id_user) === String(cek.user.id);
+    return pengirim;
   });
 
   return _respon('success', daftar, 'Daftar pengumuman berhasil diambil (' + daftar.length + ')');
@@ -2662,12 +2890,48 @@ function approvePembayaranKTU(transaksiId, status, token) {
   var tujuan = (statusBaru === 'approved') ? 'pending_Kepsek' : 'rejected';
   _tulis(t, n, 'status_approval', tujuan);
 
+  // Ditolak KTU berarti tagihannya harus kembali bisa ditagih, bukan
+  // tertinggal selamanya dalam keadaan "proses"
+  if (tujuan === 'rejected') {
+    _kembalikanTagihan(_nilaiOp(t, n, 'id_tagihan'), 'belum lunas', cek.user);
+  }
+
   _logApproval('transaksi', transaksiId, tujuan, cek.user.id, 'Pembayaran diproses KTU');
   _log(cek.user, 'APPROVE_PEMBAYARAN_KTU', 'Transaksi id ' + transaksiId + ' -> ' + tujuan);
 
   return _respon('success', { id: transaksiId, status_approval: tujuan },
     statusBaru === 'approved' ? 'Pembayaran disetujui. Diteruskan ke Kepala Sekolah.'
                               : 'Pembayaran ditolak');
+}
+
+
+/* ========================== 33. getProfilSaya ============================= */
+
+/**
+ * Data diri milik pengguna yang sedang masuk.
+ *
+ * Sengaja terpisah dari getUsers, yang hanya boleh dibaca kepsek/ktu:
+ * siapa pun berhak melihat datanya sendiri, tetapi tetap tidak berhak
+ * melihat data orang lain. PIN tidak pernah ikut dikembalikan.
+ */
+function getProfilSaya(token) {
+  var cek = _wajibRole(token, []);
+  if (!cek.ok) return cek.respon;
+
+  var t = _tabel('Users');
+  var n = _cari(t, 'id', cek.user.id);
+  if (n === -1) return _respon('error', null, 'Akun tidak ditemukan');
+
+  return _respon('success', {
+    id: _nilai(t, n, 'id'),
+    nama: _nilai(t, n, 'nama'),
+    email: _nilai(t, n, 'email'),
+    role: _nilai(t, n, 'role'),
+    subrole: _nilai(t, n, 'subrole') || '',
+    no_hp: _nilaiOp(t, n, 'no_hp'),
+    alamat: _nilaiOp(t, n, 'alamat'),
+    id_kelas_wali: _kelasWali(cek.user.id)
+  }, 'Profil berhasil diambil');
 }
 
 

@@ -2633,7 +2633,7 @@
       'Manajemen Kas', 'Laporan Keuangan',
       'Absensi Mengajar', 'RPP', 'Pengumuman Khusus',
       'Pesan Wali Kelas', 'Pengumuman', 'Profil',
-      'Konfigurasi', 'Akses Data Pengguna'
+      'Konfigurasi', 'Akses Data Pengguna', 'Pengumuman Personal'
     ];
 
     // Sebagian nama menu dipakai lebih dari satu peran. "Dashboard" milik
@@ -3018,6 +3018,9 @@
         nama: hasil.data.nama,
         role: hasil.data.role,
         subrole: hasil.data.subrole || null,
+        // Kelas perwalian dipakai modul Pengumuman Khusus untuk menentukan
+        // siapa saja wali murid yang boleh menerima pesannya
+        id_kelas_wali: hasil.data.id_kelas_wali || null,
         token: hasil.data.token      // dipakai callAPI untuk aksi berikutnya
       }));
 
@@ -3464,6 +3467,26 @@
       }
       showNotif(hasil.message || 'Berhasil', 'success');
       return true;
+    }
+
+    /* Status sebuah tagihan kini ada tiga, bukan dua.
+     *
+     * "proses" berarti Bendahara sudah mencatat pembayarannya dan sedang
+     * menunggu KTU lalu Kepala Sekolah. Menampilkannya sebagai "Belum
+     * Lunas" akan menyesatkan: wali murid bisa merasa perlu membayar lagi.
+     */
+    function _statusTagihan(t, kini) {
+      const st = String((t && t.status_bayar) || '').toLowerCase();
+      if (st === 'lunas')  return { kelas: 'lunas',  teks: 'Lunas',  lunas: true,  proses: false, menunggak: false };
+      if (st === 'proses') return { kelas: 'pending', teks: 'Menunggu Persetujuan', lunas: false, proses: true, menunggak: false };
+
+      const jt = t && t.jatuh_tempo ? new Date(t.jatuh_tempo) : null;
+      const menunggak = !!(jt && !isNaN(jt.getTime()) && jt < (kini || new Date()));
+      return {
+        kelas: menunggak ? 'menunggak' : 'belum',
+        teks: menunggak ? 'Menunggak' : 'Belum Lunas',
+        lunas: false, proses: false, menunggak: menunggak
+      };
     }
 
     // Kartu hijau serbaguna saat daftarnya kosong
@@ -4658,8 +4681,22 @@
 
     // Modul Pengumuman Personal milik Kepala Sekolah, mengembalikan HTML siap tampil
     function kepsekPengumumanPersonal() {
+      if (MODE_API) return '<div id="isi-peng-personal" data-muat="pengPersonal"></div>';
+      return _htmlIsiPengPersonal();
+    }
+
+    PEMUAT.pengPersonal = function() {
+      return _muatModul('isi-peng-personal', [['getUsers'], ['getPengumuman']], function(d) {
+        _srvIsi({ users: d[0], pengumuman: d[1] });
+        return _htmlIsiPengPersonal();
+      }, 'pengPersonal', 4);
+    };
+
+    function _htmlIsiPengPersonal() {
       const sesi = getSession();
       const baca = function(kunci) {
+        if (kunci === 'sip_users') return _srv('users', 'sip_users');
+        if (kunci === 'sip_pengumuman') return _srv('pengumuman', 'sip_pengumuman');
         try {
           const isi = JSON.parse(localStorage.getItem(kunci));
           return Array.isArray(isi) ? isi : [];
@@ -4694,7 +4731,7 @@
           '</select>' +
           '<label class="form-label" for="personal-pesan">Isi Pesan</label>' +
           '<textarea id="personal-pesan" class="input" rows="5" placeholder="Tulis pesan pengumuman..."></textarea>' +
-          '<button class="btn btn--full" onclick="kirimPengumumanPersonal()">' +
+          '<button class="btn btn--full" id="personal-kirim" onclick="kirimPengumumanPersonal()">' +
             '<i class="fa-solid fa-paper-plane"></i> Kirim Pengumuman</button>' +
         '</div>';
 
@@ -4759,7 +4796,7 @@
     }
 
     // Kirim satu pengumuman personal. Langsung berstatus approved karena dari Kepsek.
-    function kirimPengumumanPersonal() {
+    async function kirimPengumumanPersonal() {
       const sesi = getSession();
       const kolomPenerima = document.getElementById('personal-penerima');
       const kolomPesan = document.getElementById('personal-pesan');
@@ -4780,17 +4817,20 @@
         return;
       }
 
-      let users = [];
-      try {
-        const isi = JSON.parse(localStorage.getItem('sip_users'));
-        users = Array.isArray(isi) ? isi : [];
-      } catch (e) {
-        users = [];
-      }
-
+      const users = _srv('users', 'sip_users');
       const penerima = users.find(function(u) { return u && String(u.id) === String(idPenerima); });
       if (!penerima) {
         showNotif('Penerima tidak ditemukan', 'error');
+        return;
+      }
+
+      if (MODE_API) {
+        // Pesan pribadi dari Kepala Sekolah tidak melewati persetujuan lagi;
+        // beliau memang penyetuju tertingginya
+        await _kirimAksi('personal-kirim', 'createPengumuman', { data: {
+          tipe: 'personal', id_penerima_user: idPenerima, konten: pesan,
+          judul: 'Pesan untuk ' + (penerima.nama || '-')
+        } }, 'pengPersonal', 'Mengirim');
         return;
       }
 
@@ -6451,7 +6491,8 @@
           '</div>' +
           '<button class="btn btn--full" id="bayar-catat" onclick="catatPembayaran()">' +
             '<i class="fa-solid fa-save"></i> Catat Pembayaran</button>' +
-          '<p class="catatan-kecil">Status tagihan akan berubah menjadi Lunas setelah approval final</p>' +
+          '<p class="catatan-kecil">Tagihan menjadi Lunas hanya setelah disetujui KTU ' +
+            'lalu Kepala Sekolah. Sampai itu terjadi, statusnya Menunggu Persetujuan.</p>' +
         '</div>';
 
       const hariIni =
@@ -6544,17 +6585,39 @@
 
       if (MODE_API) {
         // Bendahara mencatat pembayaran atas satu tagihan yang belum lunas
+        // Tagihan yang sedang menunggu persetujuan tidak boleh diajukan lagi
         const tagihanSiswa = _srv('tagihan', 'sip_tagihan').filter(function(g) {
-          return g && String(g.id_siswa) === String(elSiswa.value) &&
+          if (!g) return false;
+          const st = String(g.status_bayar || '').toLowerCase();
+          return String(g.id_siswa) === String(elSiswa.value) &&
                  String(g.id_biaya) === String(elBiaya.value) &&
-                 String(g.status_bayar || '').toLowerCase() !== 'lunas';
+                 st !== 'lunas' && st !== 'proses';
         });
         if (tagihanSiswa.length === 0) {
-          showNotif('Tidak ada tagihan yang cocok dan belum lunas untuk siswa ini', 'error');
+          showNotif('Tidak ada tagihan yang bisa dicatat untuk siswa ini. ' +
+                    'Mungkin sudah lunas atau sedang menunggu persetujuan.', 'error');
           return;
         }
+
+        // Buktinya dikirim sebagai berkas, bukan sekadar nama berkas,
+        // supaya tersimpan di Drive dan bisa ditelusuri kembali
+        let buktiBase64 = '';
+        const berkas = (elBukti && elBukti.files && elBukti.files[0]) ? elBukti.files[0] : null;
+        if (berkas) {
+          if (berkas.size > 5 * 1024 * 1024) {
+            showNotif('Ukuran bukti maksimal 5 MB', 'error');
+            return;
+          }
+          try {
+            buktiBase64 = await _berkasKeBase64(berkas);
+          } catch (e) {
+            showNotif('Berkas bukti tidak dapat dibaca', 'error');
+            return;
+          }
+        }
+
         await _kirimAksi('bayar-catat', 'catatPembayaran',
-          { tagihanId: tagihanSiswa[0].id, buktiUrl: (elBukti && elBukti.files && elBukti.files[0]) ? elBukti.files[0].name : '' },
+          { tagihanId: tagihanSiswa[0].id, fileBase64: buktiBase64 },
           'catatPembayaran', 'Mencatat');
         return;
       }
@@ -7090,9 +7153,9 @@
         const s = siswa.find(function(x) { return x && String(x.id) === String(t.id_siswa); });
         const b = biaya.find(function(x) { return x && String(x.id) === String(t.id_biaya); });
 
-        const lunas = String(t.status_bayar || '').toLowerCase() === 'lunas';
-        const jt = t.jatuh_tempo ? new Date(t.jatuh_tempo) : null;
-        const menunggak = !lunas && jt && !isNaN(jt.getTime()) && jt < kini;
+        const st = _statusTagihan(t, kini);
+        const lunas = st.lunas;
+        const menunggak = st.menunggak;
 
         if (lunas) nLunas++;
         else { nBelum++; if (menunggak) nMenunggak++; }
@@ -11632,12 +11695,12 @@
 
       const baris = daftar.map(function(t, urut) {
         const b = biaya.find(function(x) { return x && String(x.id) === String(t.id_biaya); });
-        const lunas = String(t.status_bayar || '').toLowerCase() === 'lunas';
-        const jt = t.jatuh_tempo ? new Date(t.jatuh_tempo) : null;
-        const menunggak = !lunas && jt && !isNaN(jt.getTime()) && jt < kini;
+        const st = _statusTagihan(t, kini);
+        const lunas = st.lunas;
+        const menunggak = st.menunggak;
 
-        const kelas = lunas ? 'lunas' : (menunggak ? 'menunggak' : 'belum');
-        const teks = lunas ? 'Lunas' : (menunggak ? 'Menunggak' : 'Belum Lunas');
+        const kelas = st.kelas;
+        const teks = st.teks;
 
         // Tombol unggah hanya untuk tagihan yang belum lunas
         let aksi = '-';
@@ -12011,16 +12074,20 @@
     }
 
     function modulProfil() {
-      // Riwayat permohonan hanya perlu dijemput untuk wali murid
-      if (MODE_API && _peranWaliMurid()) {
-        return '<div id="isi-wali-profil" data-muat="waliProfil"></div>';
-      }
+      if (MODE_API) return '<div id="isi-wali-profil" data-muat="waliProfil"></div>';
       return _htmlIsiWaliProfil();
     }
 
     PEMUAT.waliProfil = function() {
-      return _muatModul('isi-wali-profil', [['getPermohonanWali']], function(d) {
-        _srvIsi({ permohonanWali: d[0] });
+      // Wali murid juga menampilkan riwayat permohonan; peran lain cukup
+      // data dirinya saja karena tidak berhak memakai aksi permohonan
+      const aksi = _peranWaliMurid()
+        ? [['getProfilSaya'], ['getPermohonanWali']]
+        : [['getProfilSaya']];
+
+      return _muatModul('isi-wali-profil', aksi, function(d) {
+        SRV.profilSaya = d[0] || null;
+        if (d.length > 1) _srvIsi({ permohonanWali: d[1] });
         return _htmlIsiWaliProfil();
       }, 'waliProfil', 3);
     };
@@ -12028,12 +12095,13 @@
     function _htmlIsiWaliProfil() {
       const sesi = getSession();
       const bolehAjukan = _peranWaliMurid();
-      // Server belum menyediakan aksi untuk membaca profil sendiri, jadi pada
-      // mode server kolom email/HP/alamat dibiarkan kosong daripada
-      // menampilkan catatan lama dari peramban
-      const u = MODE_API ? null : _bacaArr('sip_users').find(function(x) {
-        return x && sesi && String(x.id) === String(sesi.id);
-      });
+      // Pada mode server, data diri datang dari getProfilSaya. Aksi itu
+      // tidak pernah mengembalikan PIN.
+      const u = MODE_API
+        ? (SRV.profilSaya || null)
+        : _bacaArr('sip_users').find(function(x) {
+            return x && sesi && String(x.id) === String(sesi.id);
+          });
 
       const isi = function(nilai) {
         return (nilai === undefined || nilai === null || String(nilai).trim() === '') ? '-' : nilai;
@@ -12074,11 +12142,7 @@
             item('No HP Saat Ini', isi(u ? u.no_hp : '')) +
             item('Alamat Saat Ini', isi(u ? u.alamat : ''), true) +
           '</div>' +
-          (MODE_API
-            ? '<p class="pesan-info">Data saat ini belum bisa ditampilkan karena server ' +
-              'belum menyediakan aksi baca profil sendiri. Pengajuan perubahan tetap berjalan: ' +
-              'kolom yang Anda kosongkan akan dibiarkan seperti sekarang oleh server.</p>'
-            : '') +
+
           (bolehAjukan
             ? '<button class="btn btn--emas btn--full" onclick="tampilkanFormEdit()">' +
                 '<i class="fa-solid fa-edit"></i> Ubah Data Diri</button>'
